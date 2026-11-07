@@ -1,0 +1,8 @@
+{
+  "name": "PZ Version & Mod Freezer",
+  "version": "0.1.0-preview",
+  "platform": "Windows",
+  "runtime": "Windows PowerShell 5.1 + WPF",
+  "appId": 108600,
+  "entryPoint": "PZ-Freezer.cmd"
+}
