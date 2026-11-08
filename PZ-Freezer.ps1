@@ -1,5 +1,5 @@
 ﻿[CmdletBinding()]
-param([switch]$SelfTest,[string]$SelfTestProfilePath)
+param([switch]$SelfTest,[string]$SelfTestProfilePath,[string]$SelfTestScreenshotPath,[ValidateSet('Full','Incremental','Backup')][string]$SelfTestMode='Full')
 
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
@@ -17,111 +17,119 @@ if(-not(Test-Path -LiteralPath $script:Manager -PathType Leaf)){
 [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="PZ Version &amp; Mod Freezer" Width="1040" Height="760"
-        MinWidth="900" MinHeight="680" WindowStartupLocation="CenterScreen"
-        Background="#F4F6F8" FontFamily="Microsoft YaHei UI">
+        Title="PZ Version &amp; Mod Freezer" Width="1080" Height="960"
+        MinWidth="940" MinHeight="860" WindowStartupLocation="CenterScreen"
+        Background="#111820" FontFamily="Microsoft YaHei UI">
   <Window.Resources>
     <Style TargetType="Button">
-      <Setter Property="Padding" Value="14,8"/><Setter Property="Margin" Value="4"/>
-      <Setter Property="MinHeight" Value="36"/><Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Padding" Value="14,7"/><Setter Property="Margin" Value="4"/>
+      <Setter Property="MinHeight" Value="34"/><Setter Property="Cursor" Value="Hand"/>
     </Style>
     <Style TargetType="TextBox">
-      <Setter Property="Padding" Value="8,6"/><Setter Property="Margin" Value="4"/>
+      <Setter Property="Padding" Value="8,6"/><Setter Property="Margin" Value="4"/><Setter Property="Background" Value="#F7FFFFFF"/>
+    </Style>
+    <Style TargetType="ComboBox">
+      <Setter Property="Padding" Value="8,5"/><Setter Property="Margin" Value="4"/><Setter Property="MinHeight" Value="34"/>
     </Style>
     <Style TargetType="GroupBox">
-      <Setter Property="Margin" Value="8"/><Setter Property="Padding" Value="10"/>
+      <Setter Property="Margin" Value="8,5"/><Setter Property="Padding" Value="10"/><Setter Property="Background" Value="#E8F4F6F8"/>
+      <Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Foreground" Value="#16222D"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="GroupBox">
+            <Grid>
+              <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+              <Border Grid.Row="1" Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}"><ContentPresenter Content="{TemplateBinding Content}"/></Border>
+              <Border Grid.Row="0" Background="#F2F4F6F8" CornerRadius="5,5,0,0" Padding="10,4" Margin="12,0,0,-1" HorizontalAlignment="Left"><ContentPresenter Content="{TemplateBinding Header}"/></Border>
+            </Grid>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
     </Style>
   </Window.Resources>
-  <Grid Margin="14">
-    <Grid.RowDefinitions>
-      <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
-      <RowDefinition Height="*"/><RowDefinition Height="Auto"/>
-    </Grid.RowDefinitions>
+  <Grid Background="#5209131B" Margin="0">
+    <Grid Margin="14">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/>
+      </Grid.RowDefinitions>
 
-    <Border Grid.Row="0" Background="#243447" CornerRadius="8" Padding="18" Margin="8,4,8,8">
-      <Grid>
-        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-        <StackPanel>
-          <TextBlock Text="PZ Version &amp; Mod Freezer" Foreground="White" FontSize="24" FontWeight="SemiBold"/>
-          <TextBlock Text="保存可独立运行的游戏版本、MOD、配置与存档" Foreground="#D7E2EC" Margin="0,6,0,0"/>
-        </StackPanel>
-        <Border Grid.Column="1" Background="#2F9E72" CornerRadius="14" Padding="12,5" VerticalAlignment="Center">
-          <TextBlock x:Name="StatusText" Text="准备就绪" Foreground="White" FontWeight="SemiBold"/>
-        </Border>
-      </Grid>
-    </Border>
-
-    <GroupBox Grid.Row="1" Header="1. Steam / Project Zomboid 来源">
-      <Grid>
-        <Grid.ColumnDefinitions><ColumnDefinition Width="120"/><ColumnDefinition Width="*"/><ColumnDefinition Width="86"/></Grid.ColumnDefinitions>
-        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-        <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="游戏本体"/>
-        <TextBox Grid.Row="0" Grid.Column="1" x:Name="GamePathBox"/>
-        <Button Grid.Row="0" Grid.Column="2" x:Name="BrowseGameButton" Content="选择"/>
-        <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="Workshop"/>
-        <TextBox Grid.Row="1" Grid.Column="1" x:Name="WorkshopPathBox"/>
-        <Button Grid.Row="1" Grid.Column="2" x:Name="BrowseWorkshopButton" Content="选择"/>
-        <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="缓存/存档"/>
-        <TextBox Grid.Row="2" Grid.Column="1" x:Name="CachePathBox"/>
-        <Button Grid.Row="2" Grid.Column="2" x:Name="BrowseCacheButton" Content="选择"/>
-        <TextBlock Grid.Row="3" VerticalAlignment="Center" Text="工具目录"/>
-        <TextBox Grid.Row="3" Grid.Column="1" x:Name="RootPathBox" IsReadOnly="True" Background="#EEF1F4"/>
-        <Button Grid.Row="3" Grid.Column="2" x:Name="DetectButton" Content="自动检测"/>
-      </Grid>
-    </GroupBox>
-
-    <GroupBox Grid.Row="2" Header="2. 创建与管理冻结版本">
-      <Grid>
-        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-        <StackPanel Grid.Row="0" Orientation="Horizontal">
-          <Button x:Name="CreateButton" Content="一键创建冻结版本" Background="#2F9E72" Foreground="White" FontWeight="SemiBold"/>
-          <Button x:Name="PreflightButton" Content="只做预检"/>
-          <Button x:Name="LaunchButton" Content="启动当前冻结版"/>
-          <Button x:Name="VerifyButton" Content="完整校验"/>
-          <Button x:Name="BackupButton" Content="备份存档"/>
-        </StackPanel>
-        <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-          <ComboBox x:Name="ProfilesBox" Width="260" Margin="4" DisplayMemberPath="Display"/>
-          <Button x:Name="UseProfileButton" Content="设为当前"/>
-          <Button x:Name="RefreshButton" Content="刷新"/>
-        </StackPanel>
-        <StackPanel Grid.Row="1" Grid.ColumnSpan="2" Orientation="Horizontal">
-          <Button x:Name="MigrationPreviewButton" Content="检查可迁移内容"/>
-          <Button x:Name="MigrateButton" Content="增量迁移到当前版本" Background="#D9892B" Foreground="White" FontWeight="SemiBold"/>
-          <Button x:Name="RollbackMigrationButton" Content="回迁最近一次"/>
-          <TextBlock Text="只补齐缺失文件与缺失 Mod ID；已有文件不覆盖" VerticalAlignment="Center" Foreground="#596773" Margin="12,0,0,0"/>
-        </StackPanel>
-        <DockPanel Grid.Row="2" Grid.ColumnSpan="2" Margin="4,5,4,0">
-          <TextBlock Text="当前冻结目标：" VerticalAlignment="Center" FontWeight="SemiBold"/>
-          <Button x:Name="BrowseTargetProfileButton" Content="选择冻结位置" DockPanel.Dock="Right"/>
-          <TextBox x:Name="TargetProfileBox" IsReadOnly="True" Background="#EEF1F4" VerticalContentAlignment="Center"/>
-        </DockPanel>
-      </Grid>
-    </GroupBox>
-
-    <GroupBox Grid.Row="3" Header="操作进度与结果">
-      <Grid>
-        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-        <Border Grid.Row="0" Background="#EAF2F8" CornerRadius="6" Padding="12,9" Margin="4,2,4,8">
+      <Border Grid.Row="0" Background="#E5222F3B" CornerRadius="8" Padding="18" Margin="8,4,8,8">
+        <Grid>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
           <StackPanel>
-            <TextBlock x:Name="StepText" Text="当前：等待操作" FontWeight="SemiBold" Foreground="#243447" FontSize="14"/>
-            <TextBlock x:Name="NextStepText" Text="下一步：选择要执行的操作" Foreground="#596773" Margin="0,4,0,0"/>
+            <TextBlock Text="PZ Version &amp; Mod Freezer" Foreground="White" FontSize="24" FontWeight="SemiBold"/>
+            <TextBlock Text="版本、MOD 与存档的独立冻结工具" Foreground="#D7E2EC" Margin="0,6,0,0"/>
           </StackPanel>
-        </Border>
-        <TextBox Grid.Row="1" x:Name="LogBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
-                 VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-                 FontFamily="Microsoft YaHei UI" FontSize="13" Background="#101820" Foreground="#D8E3EA"/>
-      </Grid>
-    </GroupBox>
+          <Border Grid.Column="1" Background="#2F9E72" CornerRadius="14" Padding="12,5" VerticalAlignment="Center">
+            <TextBlock x:Name="StatusText" Text="准备就绪" Foreground="White" FontWeight="SemiBold"/>
+          </Border>
+        </Grid>
+      </Border>
 
-    <Grid Grid.Row="4" Margin="8,2">
-      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-      <ProgressBar x:Name="BusyBar" Height="7" IsIndeterminate="False" Visibility="Hidden"/>
-      <StackPanel Grid.Column="1" Orientation="Horizontal">
-        <Button x:Name="OpenButton" Content="打开工具目录"/>
-        <Button x:Name="OpenDocsButton" Content="应用内说明"/>
-      </StackPanel>
+      <GroupBox Grid.Row="1" Header="1. Steam / Project Zomboid 来源">
+        <Grid>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="120"/><ColumnDefinition Width="*"/><ColumnDefinition Width="86"/></Grid.ColumnDefinitions>
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+          <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="游戏本体"/><TextBox Grid.Row="0" Grid.Column="1" x:Name="GamePathBox"/><Button Grid.Row="0" Grid.Column="2" x:Name="BrowseGameButton" Content="选择"/>
+          <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="Workshop"/><TextBox Grid.Row="1" Grid.Column="1" x:Name="WorkshopPathBox"/><Button Grid.Row="1" Grid.Column="2" x:Name="BrowseWorkshopButton" Content="选择"/>
+          <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="缓存/存档"/><TextBox Grid.Row="2" Grid.Column="1" x:Name="CachePathBox"/><Button Grid.Row="2" Grid.Column="2" x:Name="BrowseCacheButton" Content="选择"/>
+          <TextBlock Grid.Row="3" VerticalAlignment="Center" Text="工具目录"/><TextBox Grid.Row="3" Grid.Column="1" x:Name="RootPathBox" IsReadOnly="True" Background="#EEF1F4"/><Button Grid.Row="3" Grid.Column="2" x:Name="DetectButton" Content="自动检测"/>
+        </Grid>
+      </GroupBox>
+
+      <GroupBox Grid.Row="2" Header="2. 迁移位置">
+        <Grid>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="120"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+          <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="冻结版本"/>
+          <ComboBox Grid.Row="0" Grid.Column="1" x:Name="ProfilesBox" DisplayMemberPath="Display"/>
+          <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal"><Button x:Name="UseProfileButton" Content="设为当前"/><Button x:Name="RefreshButton" Content="刷新"/></StackPanel>
+          <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="当前位置"/>
+          <TextBox Grid.Row="1" Grid.Column="1" x:Name="TargetProfileBox" IsReadOnly="True" Background="#EEF1F4"/>
+          <Button Grid.Row="1" Grid.Column="2" x:Name="BrowseTargetProfileButton" Content="选择冻结位置"/>
+        </Grid>
+      </GroupBox>
+
+      <GroupBox Grid.Row="3" Header="3. 执行操作">
+        <Grid>
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+          <DockPanel Grid.Row="0" Margin="2,0,2,6">
+            <TextBlock Text="操作模式" Width="116" VerticalAlignment="Center"/>
+            <ComboBox x:Name="OperationModeBox" SelectedIndex="0">
+              <ComboBoxItem Content="全量迁移模式" Tag="Full"/><ComboBoxItem Content="增量迁移模式" Tag="Incremental"/><ComboBoxItem Content="备份存档" Tag="Backup"/>
+            </ComboBox>
+          </DockPanel>
+          <Grid Grid.Row="1">
+            <StackPanel x:Name="FullModePanel" Orientation="Horizontal">
+              <Button x:Name="CreateButton" Content="一键创建完整冻结版本" Background="#2F9E72" Foreground="White" FontWeight="SemiBold"/>
+              <Button x:Name="PreflightButton" Content="只做预检"/><Button x:Name="LaunchButton" Content="启动当前冻结版"/><Button x:Name="VerifyButton" Content="完整校验"/>
+            </StackPanel>
+            <StackPanel x:Name="IncrementalModePanel" Visibility="Collapsed">
+              <StackPanel Orientation="Horizontal"><Button x:Name="MigrationPreviewButton" Content="增量检查"/><Button x:Name="MigrateButton" Content="迁移缺失内容" Background="#D9892B" Foreground="White" FontWeight="SemiBold"/><Button x:Name="RollbackMigrationButton" Content="回迁最近一次"/></StackPanel>
+              <TextBlock Text="只补齐缺失文件与缺失 Mod ID；已有文件不覆盖。" Foreground="#4F5F6B" Margin="8,3"/>
+            </StackPanel>
+            <Grid x:Name="BackupModePanel" Visibility="Collapsed">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="120"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+              <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+              <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="选择存档"/><ComboBox Grid.Row="0" Grid.Column="1" x:Name="SaveProfileBox" DisplayMemberPath="Display"/><Button Grid.Row="0" Grid.Column="2" x:Name="RefreshSavesButton" Content="刷新存档"/>
+              <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="外部备份位置"/><TextBox Grid.Row="1" Grid.Column="1" x:Name="BackupDestinationBox"/><Button Grid.Row="1" Grid.Column="2" x:Name="BrowseBackupDestinationButton" Content="选择位置"/>
+              <TextBlock Grid.Row="2" Grid.ColumnSpan="2" Text="备份所选存档内部的全部世界/角色文件；不包含其它存档、日志、录像、全局设置和 MOD 资源。" TextWrapping="Wrap" Foreground="#4F5F6B" Margin="8,5"/>
+              <Button Grid.Row="2" Grid.Column="2" x:Name="BackupButton" Content="开始备份所选存档" Background="#2F6FA3" Foreground="White" FontWeight="SemiBold"/>
+            </Grid>
+          </Grid>
+        </Grid>
+      </GroupBox>
+
+      <GroupBox Grid.Row="4" Header="操作进度与结果" MinHeight="185">
+        <Grid>
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+          <Border Grid.Row="0" Background="#EAF2F8" CornerRadius="6" Padding="12,9" Margin="4,2,4,8"><StackPanel><TextBlock x:Name="StepText" Text="当前：等待操作" FontWeight="SemiBold" Foreground="#243447" FontSize="14"/><TextBlock x:Name="NextStepText" Text="下一步：选择要执行的操作" Foreground="#596773" Margin="0,4,0,0"/></StackPanel></Border>
+          <TextBox Grid.Row="1" x:Name="LogBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" FontFamily="Microsoft YaHei UI" FontSize="13" Background="#E6111820" Foreground="#D8E3EA"/>
+        </Grid>
+      </GroupBox>
+
+      <Grid Grid.Row="5" Margin="8,2"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><ProgressBar x:Name="BusyBar" Height="7" IsIndeterminate="False" Visibility="Hidden"/><StackPanel Grid.Column="1" Orientation="Horizontal"><Button x:Name="OpenButton" Content="打开工具目录"/><Button x:Name="OpenDocsButton" Content="应用内说明"/></StackPanel></Grid>
     </Grid>
   </Grid>
 </Window>
@@ -131,9 +139,17 @@ $reader = New-Object System.Xml.XmlNodeReader $xaml
 $window = [Windows.Markup.XamlReader]::Load($reader)
 $names = @('StatusText','GamePathBox','WorkshopPathBox','CachePathBox','RootPathBox','DetectButton',
     'BrowseGameButton','BrowseWorkshopButton','BrowseCacheButton','CreateButton','PreflightButton','LaunchButton','VerifyButton',
+    'OperationModeBox','FullModePanel','IncrementalModePanel','BackupModePanel','SaveProfileBox','RefreshSavesButton','BackupDestinationBox','BrowseBackupDestinationButton',
     'BackupButton','MigrationPreviewButton','MigrateButton','RollbackMigrationButton','BrowseTargetProfileButton','TargetProfileBox','ProfilesBox','UseProfileButton','RefreshButton','StepText','NextStepText','LogBox','BusyBar','OpenButton','OpenDocsButton')
 foreach($name in $names){Set-Variable -Name $name -Value $window.FindName($name) -Scope Script}
 $RootPathBox.Text = $script:AppRoot
+$backgroundPath=Join-Path $script:AppRoot 'assets\pz-freezer-background.png'
+if(Test-Path -LiteralPath $backgroundPath -PathType Leaf){
+    $image=New-Object Windows.Media.Imaging.BitmapImage
+    $image.BeginInit();$image.CacheOption='OnLoad';$image.UriSource=[Uri]$backgroundPath;$image.EndInit();$image.Freeze()
+    $brush=New-Object Windows.Media.ImageBrush($image);$brush.Stretch='UniformToFill';$brush.Opacity=0.82
+    $window.Background=$brush
+}
 
 function Add-Log([string]$Text){
     if([string]::IsNullOrWhiteSpace($Text)){return}
@@ -196,7 +212,7 @@ function Set-Busy([bool]$Busy,[string]$Text){
     $BusyBar.IsIndeterminate=$Busy
     $BusyBar.Visibility=if($Busy){'Visible'}else{'Hidden'}
     $StatusText.Text=$Text
-    foreach($control in @($DetectButton,$CreateButton,$PreflightButton,$LaunchButton,$VerifyButton,$BackupButton,$MigrationPreviewButton,$MigrateButton,$RollbackMigrationButton,$BrowseTargetProfileButton,$UseProfileButton,$RefreshButton)){
+    foreach($control in @($DetectButton,$CreateButton,$PreflightButton,$LaunchButton,$VerifyButton,$BackupButton,$MigrationPreviewButton,$MigrateButton,$RollbackMigrationButton,$BrowseTargetProfileButton,$UseProfileButton,$RefreshButton,$OperationModeBox,$RefreshSavesButton,$BrowseBackupDestinationButton)){
         $control.IsEnabled=-not $Busy
     }
 }
@@ -228,6 +244,33 @@ function Select-Folder([System.Windows.Controls.TextBox]$Target,[string]$Descrip
     if(Test-Path -LiteralPath $Target.Text){$dialog.SelectedPath=$Target.Text}
     if($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){$Target.Text=$dialog.SelectedPath}
     $dialog.Dispose()
+}
+
+function Update-OperationMode {
+    $mode=if($OperationModeBox.SelectedItem){$OperationModeBox.SelectedItem.Tag.ToString()}else{'Full'}
+    $FullModePanel.Visibility=if($mode -eq 'Full'){'Visible'}else{'Collapsed'}
+    $IncrementalModePanel.Visibility=if($mode -eq 'Incremental'){'Visible'}else{'Collapsed'}
+    $BackupModePanel.Visibility=if($mode -eq 'Backup'){'Visible'}else{'Collapsed'}
+    if($mode -eq 'Backup'){Refresh-Saves}
+}
+
+function Refresh-Saves {
+    $SaveProfileBox.Items.Clear()
+    $currentPath=Join-Path $script:AppRoot 'current-freeze.json'
+    if(-not(Test-Path -LiteralPath $currentPath -PathType Leaf)){return}
+    try{
+        $cfg=Get-Content -LiteralPath $currentPath -Raw|ConvertFrom-Json
+        $savesRoot=Join-Path $cfg.CachePath 'Saves'
+        if(-not(Test-Path -LiteralPath $savesRoot -PathType Container)){return}
+        $items=@()
+        foreach($mode in @(Get-ChildItem -LiteralPath $savesRoot -Directory -ErrorAction Stop)){
+            foreach($save in @(Get-ChildItem -LiteralPath $mode.FullName -Directory -ErrorAction Stop)){
+                $items+=[pscustomobject]@{Display=("{0} · {1} · {2}" -f $mode.Name,$save.Name,$save.LastWriteTime.ToString('yyyy-MM-dd HH:mm'));Path=$save.FullName;Modified=$save.LastWriteTime}
+            }
+        }
+        foreach($item in @($items|Sort-Object Modified -Descending)){[void]$SaveProfileBox.Items.Add($item)}
+        if($SaveProfileBox.Items.Count -gt 0){$SaveProfileBox.SelectedIndex=0}
+    }catch{Add-Log "[警告] 无法读取存档列表：$($_.Exception.Message)"}
 }
 
 function Get-FrozenConfigFromFolder([string]$Folder){
@@ -267,6 +310,7 @@ function Set-CurrentFrozenConfig($Config,[string]$Label){
     Add-Log "[通过] 当前冻结目标：$($Config.FreezeRoot)"
     if($Label){Add-Log "        $Label"}
     $StatusText.Text='已选择冻结目标'
+    Refresh-Saves
 }
 
 function Select-ExternalFrozenProfile {
@@ -313,6 +357,7 @@ function Refresh-Profiles {
     }else{$TargetProfileBox.Text='尚未选择冻结版本'}
     if($ProfilesBox.Items.Count -gt 0){$ProfilesBox.SelectedIndex=if($selected -ge 0){$selected}else{0}}
     else{$ProfilesBox.SelectedIndex=-1}
+    Refresh-Saves
 }
 
 function Use-SelectedProfile {
@@ -353,6 +398,10 @@ function Start-ManagerAction([string]$Action){
         $answer=[System.Windows.MessageBox]::Show("将撤回最近一次增量迁移。若本次新增文件后来发生过修改，回迁会自动停止，不会强制删除。`n`n确认继续？",'确认回迁','YesNo','Warning')
         if($answer -ne 'Yes'){return}
     }
+    if($Action -eq 'BackupSave'){
+        if(-not $SaveProfileBox.SelectedItem){[System.Windows.MessageBox]::Show('请先选择一个具体存档。','备份存档','OK','Information')|Out-Null;return}
+        if(-not(Test-Path -LiteralPath $BackupDestinationBox.Text -PathType Container)){[System.Windows.MessageBox]::Show('请选择有效的外部备份位置。','备份存档','OK','Information')|Out-Null;return}
+    }
     $busyText=switch($Action){'Create'{'正在创建'}'Preflight'{'正在预检'}'PreviewMigration'{'正在检查迁移'}'Migrate'{'正在迁移'}'RollbackMigration'{'正在回迁'}'Verify'{'正在校验'}'BackupSave'{'正在备份'}'Launch'{'正在启动'}default{'正在执行'}}
     Set-Busy $true $busyText
     $script:ActionStart=Get-Date;$script:CurrentAction=$Action;$script:LastErrorReason=$null
@@ -360,14 +409,16 @@ function Start-ManagerAction([string]$Action){
     Set-Step "准备$label" '读取配置并开始执行'
     Add-Log ("[{0}] 开始：{1}" -f (Get-Date -Format 'HH:mm:ss'),$label)
     $manager=$script:Manager;$root=$script:AppRoot;$game=$GamePathBox.Text;$workshop=$WorkshopPathBox.Text;$cache=$CachePathBox.Text
+    $selectedSave=if($SaveProfileBox.SelectedItem){$SaveProfileBox.SelectedItem.Path}else{''};$backupDestination=$BackupDestinationBox.Text
     $script:Job=Start-Job -ScriptBlock {
-        param($Manager,$ActionName,$Root,$Game,$Workshop,$Cache)
+        param($Manager,$ActionName,$Root,$Game,$Workshop,$Cache,$SelectedSave,$BackupDestination)
         $args=@('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',$Manager,'-Action',$ActionName,'-ManagerRoot',$Root)
         if($ActionName -in @('Create','Preflight','PreviewMigration','Migrate')){$args+=@('-SourceGame',$Game,'-SourceWorkshop',$Workshop,'-SourceCache',$Cache)}
         if($ActionName -eq 'Migrate'){$args+='-ConfirmedExistingTarget'}
+        if($ActionName -eq 'BackupSave'){$args+=@('-SavePath',$SelectedSave,'-BackupDestination',$BackupDestination)}
         & powershell.exe @args 2>&1|ForEach-Object{$_.ToString()}
         if($LASTEXITCODE -ne 0){throw "核心进程退出码：$LASTEXITCODE"}
-    } -ArgumentList $manager,$Action,$root,$game,$workshop,$cache
+    } -ArgumentList $manager,$Action,$root,$game,$workshop,$cache,$selectedSave,$backupDestination
     $JobTimer.Start()
 }
 
@@ -395,6 +446,7 @@ $JobTimer.Add_Tick({
         $script:Job=$null
         $JobTimer.Stop()
         Refresh-Profiles
+        Refresh-Saves
     }
 })
 
@@ -402,6 +454,7 @@ $DetectButton.Add_Click({Invoke-Detection})
 $BrowseGameButton.Add_Click({Select-Folder $GamePathBox '选择 Project Zomboid 游戏本体目录'})
 $BrowseWorkshopButton.Add_Click({Select-Folder $WorkshopPathBox '选择 Steam Workshop 的 108600 目录'})
 $BrowseCacheButton.Add_Click({Select-Folder $CachePathBox '选择 Zomboid 缓存/存档目录'})
+$OperationModeBox.Add_SelectionChanged({Update-OperationMode})
 $CreateButton.Add_Click({Start-ManagerAction 'Create'})
 $PreflightButton.Add_Click({Start-ManagerAction 'Preflight'})
 $MigrationPreviewButton.Add_Click({Start-ManagerAction 'PreviewMigration'})
@@ -411,6 +464,8 @@ $BrowseTargetProfileButton.Add_Click({Select-ExternalFrozenProfile})
 $LaunchButton.Add_Click({Start-ManagerAction 'Launch'})
 $VerifyButton.Add_Click({Start-ManagerAction 'Verify'})
 $BackupButton.Add_Click({Start-ManagerAction 'BackupSave'})
+$RefreshSavesButton.Add_Click({Refresh-Saves})
+$BrowseBackupDestinationButton.Add_Click({Select-Folder $BackupDestinationBox '选择存档 ZIP 的外部保存位置'})
 $RefreshButton.Add_Click({Refresh-Profiles})
 $UseProfileButton.Add_Click({Use-SelectedProfile})
 $OpenButton.Add_Click({Start-Process explorer.exe -ArgumentList $script:AppRoot})
@@ -425,12 +480,21 @@ $window.Add_Closing({param($sender,$e)
 })
 
 Refresh-Profiles
+Update-OperationMode
 if($SelfTest){
-    if(-not $window -or -not $CreateButton -or -not $LogBox){throw 'GUI 控件初始化失败。'}
+    if(-not $window -or -not $CreateButton -or -not $LogBox -or -not $OperationModeBox -or -not $BackupModePanel){throw 'GUI 控件初始化失败。'}
     if($SelfTestProfilePath){
         $testConfig=Get-FrozenConfigFromFolder $SelfTestProfilePath
         if(-not $testConfig.FreezeRoot -or -not $testConfig.GamePath -or -not $testConfig.CachePath){throw '冻结位置解析自检失败。'}
         "PROFILE_RESOLVE_PASS=$($testConfig.FreezeRoot)"
+    }
+    if($SelfTestScreenshotPath){
+        $OperationModeBox.SelectedIndex=@{Full=0;Incremental=1;Backup=2}[$SelfTestMode];Update-OperationMode
+        $window.Width=1080;$window.Height=960;$window.Show();$window.UpdateLayout()
+        $bitmap=New-Object Windows.Media.Imaging.RenderTargetBitmap(1080,960,96,96,[Windows.Media.PixelFormats]::Pbgra32)
+        $bitmap.Render($window);$encoder=New-Object Windows.Media.Imaging.PngBitmapEncoder;$encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
+        $stream=[IO.File]::Create([IO.Path]::GetFullPath($SelfTestScreenshotPath));try{$encoder.Save($stream)}finally{$stream.Dispose()};$window.Close()
+        "GUI_SCREENSHOT=$([IO.Path]::GetFullPath($SelfTestScreenshotPath))"
     }
     'GUI_SELF_TEST_PASS'
     return

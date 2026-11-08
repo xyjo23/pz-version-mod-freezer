@@ -6,7 +6,7 @@
 
 ## 下载
 
-普通玩家请从 [Releases](https://github.com/xyjo23/pz-version-mod-freezer/releases/latest) 下载最新 ZIP，完整解压后双击 `PZ-Freezer.exe`。不要从 ZIP 压缩包内部直接运行。`PZ-Freezer.cmd` 保留为兼容入口。
+普通玩家请从 [Releases](https://github.com/xyjo23/pz-version-mod-freezer/releases/latest) 下载最新 ZIP。完整解压后会看到外层的 `PZ-Freezer.exe` 和一个同名程序文件夹；双击外层 EXE。不要移动 EXE、单独复制 EXE，或从 ZIP 内部直接运行。程序文件夹内保留 `PZ-Freezer.cmd` 作为兼容入口。
 
 Release 同时提供 SHA-256 校验文件。当前 EXE 尚未使用商业代码签名证书，因此 Windows 仍可能显示“未知发布者”或 SmartScreen 提醒；只有受信任的 Authenticode 证书才能从根本上消除此提示。不要安装来历不明的证书，也不要把自签名伪装成可信发布者。应用内“使用说明”不会再调用 `.md` 文件关联。
 
@@ -29,7 +29,7 @@ Release 同时提供 SHA-256 校验文件。当前 EXE 尚未使用商业代码�
 - 将游戏、MOD、配置和存档复制为独立快照。
 - 使用 `-nosteam` 和独立 `-cachedir` 启动。
 - 为游戏与 MOD 生成 SHA-256 基线并执行完整校验。
-- 一键创建独立存档备份。
+- 选择具体存档并备份到用户指定的外部目录。
 - 支持多个版本快照及“设为当前”。
 - 根据物理内存为冻结副本设置保守的 Java 最大堆；不会修改 Steam 原版。
 - 检查 Steam/Workshop 与当前冻结版之间缺失的游戏文件和 Mod ID。
@@ -37,6 +37,7 @@ Release 同时提供 SHA-256 校验文件。当前 EXE 尚未使用商业代码�
 - 保存最近一次迁移事务，并支持安全回迁。
 - 用清晰的“当前步骤 / 下一步 / 结果 / 用时 / 错误原因”代替底层复制输出。
 - 在应用内阅读使用说明，不再依赖 Windows 的 `.md` 文件关联。
+- 通过“全量迁移 / 增量迁移 / 备份存档”下拉模式分离不同工作流。
 
 ## 增量迁移新 MOD
 
@@ -61,18 +62,27 @@ Release 同时提供 SHA-256 校验文件。当前 EXE 尚未使用商业代码�
 
 注意：文件和版本检查通过不代表 MOD 一定兼容已有存档。地图、世界生成、车辆和大型脚本 MOD 仍可能要求新档。
 
+## 精确备份存档
+
+在“3. 执行操作”中选择“备份存档”，再选择一个具体存档和外部保存目录。工具只压缩该存档目录，并生成内置清单、外部 JSON 摘要与 ZIP SHA-256。
+
+存档内部的地图分块、角色数据库、车辆、世界状态、MOD 状态和 `mods.txt` 会完整保留。工具不会擅自删除其中的文件：The Indie Stone 支持人员建议直接压缩所选存档文件夹，并明确指出删除地图分块会丢失对应区域的进度。参见 [官方论坛的备份建议](https://theindiestone.com/forums/topic/34807-game-freezing/) 和 [分块文件说明](https://theindiestone.com/forums/topic/25840-system-crash-messing-with-backup-save/)。
+
+不会放入 ZIP 的内容包括其它存档、已本地化 MOD 资源、日志、录像、Workshop 缓存以及全局按键和画面设置。这些内容不是恢复该存档世界所必需的。
+
 ## 目录结构
 
 ```text
 <解压目录>\
-├─ PZ-Freezer.exe             推荐的图形界面入口
-├─ PZ-Freezer.cmd             兼容入口
-├─ PZ-Freezer.ps1             图形界面
-├─ tools\                     冻结核心和 MOD 分析器
-├─ profiles\                  各版本完整快照
-├─ logs\                      操作日志
-├─ docs\                      项目文档
-└─ current-freeze.json        当前选中的快照（创建后出现）
+├─ PZ-Freezer.exe                         推荐入口
+└─ PZ-Version-Mod-Freezer-<版本>\         程序文件夹，请勿与 EXE 分离
+   ├─ PZ-Freezer.cmd                      兼容入口
+   ├─ PZ-Freezer.ps1                     图形界面
+   ├─ assets\                            原创图标和背景
+   ├─ tools\                             冻结核心和 MOD 分析器
+   ├─ profiles\                          各版本完整快照
+   ├─ logs\                              操作日志
+   └─ current-freeze.json                当前选中的快照（创建后出现）
 ```
 
 每个快照包含：
@@ -107,7 +117,7 @@ backups\     存档 ZIP 备份
 
 ## 当前版本
 
-项目版本：`0.3.0-preview`
+项目版本：`0.4.0-preview`
 
 这是根据一次 B42.21.0、154 个 Workshop 项目和 189 个存档 MOD 的真实迁移整理出的首个可运行版本。
 

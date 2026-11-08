@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.0-preview - 2026-11-08
+
+- Changed the ZIP layout to place `PZ-Freezer.exe` beside a single versioned application folder.
+- Added an original blurred survival-town background; no Project Zomboid artwork or logos are redistributed.
+- Split the GUI into source, migration target and operation sections.
+- Added dropdown operation pages for full migration, incremental migration and save backup.
+- Added save discovery and selection for the active frozen profile.
+- Added an external destination picker for save backups.
+- Replaced whole-cache backup with selected-save ZIP backup while preserving every file inside that save.
+- Excluded unrelated saves, logs, recordings, global settings and localized MOD assets from selected-save backups.
+- Added an embedded backup manifest, sidecar metadata and SHA-256 for each backup.
+
 ## 0.3.0-preview - 2026-11-08
 
 - Added a one-click Windows EXE launcher with an original project icon.

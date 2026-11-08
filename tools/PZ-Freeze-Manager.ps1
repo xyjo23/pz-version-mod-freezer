@@ -4,6 +4,8 @@ param(
     [string]$Action = 'Info',
     [string]$ManagerRoot,
     [string]$BackupPath,
+    [string]$BackupDestination,
+    [string]$SavePath,
     [string]$SourceGame,
     [string]$SourceWorkshop,
     [string]$SourceCache,
@@ -653,38 +655,53 @@ function Invoke-Launch {
 }
 
 function Invoke-SaveBackup {
-    param($Config)
+    param($Config,[string]$SelectedSavePath,[string]$DestinationRoot)
     Assert-NoPZProcess
-    Write-StepEvent '收集存档与配置' '压缩备份' '这是手动备份；增量迁移不会再自动执行整包存档压缩。'
-    $stamp=Get-TimeStamp
-    $dest=Join-Path $Config.BackupPath ('cache-snapshot_{0}.zip' -f $stamp)
-    $stage=Join-Path $Config.FreezeRoot ('work\backup_stage_{0}' -f $stamp)
-    New-Item -ItemType Directory -Path $stage -Force|Out-Null
-    try {
-        foreach($dirName in @('Saves','Lua','Sandbox Presets')){
-            $source=Join-Path $Config.CachePath $dirName
-            if(Test-Path -LiteralPath $source){Copy-Item -LiteralPath $source -Destination (Join-Path $stage $dirName) -Recurse}
-        }
-        foreach($fileName in @('options.ini','latestSave.ini','version.txt')){
-            $source=Join-Path $Config.CachePath $fileName
-            if(Test-Path -LiteralPath $source){Copy-Item -LiteralPath $source -Destination (Join-Path $stage $fileName)}
-        }
-        $modsStage=Join-Path $stage 'mods';New-Item -ItemType Directory -Path $modsStage -Force|Out-Null
-        foreach($fileName in @('default.txt','reset-mods-42_00.txt')){
-            $source=Join-Path $Config.CachePath ('mods\'+$fileName)
-            if(Test-Path -LiteralPath $source){Copy-Item -LiteralPath $source -Destination (Join-Path $modsStage $fileName)}
-        }
-        Write-StepEvent '压缩存档备份' '计算备份 SHA-256' '大型存档可能需要数分钟。'
-        Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $dest -CompressionLevel Optimal
-    } finally {
-        $resolved=[IO.Path]::GetFullPath($stage)
-        if($resolved.StartsWith([IO.Path]::GetFullPath($Config.FreezeRoot),[StringComparison]::OrdinalIgnoreCase)){
-            Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction SilentlyContinue
-        }
+    if(-not $SelectedSavePath){throw '请选择一个要备份的存档。'}
+    if(-not $DestinationRoot){throw '请选择存档备份的外部保存位置。'}
+    $savesRoot=[IO.Path]::GetFullPath((Join-Path $Config.CachePath 'Saves')).TrimEnd('\')
+    $saveFull=[IO.Path]::GetFullPath($SelectedSavePath).TrimEnd('\')
+    if(-not(Test-Path -LiteralPath $saveFull -PathType Container)){throw "所选存档不存在：$saveFull"}
+    $saveItem=Get-Item -LiteralPath $saveFull
+    if(-not $saveFull.StartsWith($savesRoot+'\',[StringComparison]::OrdinalIgnoreCase) -or -not $saveItem.Parent -or -not $saveItem.Parent.Parent -or $saveItem.Parent.Parent.FullName.TrimEnd('\') -ine $savesRoot){
+        throw '所选目录必须是当前冻结版本 Saves\游戏模式\存档名称 下的具体存档。'
     }
+    $destination=[IO.Path]::GetFullPath($DestinationRoot).TrimEnd('\')
+    if($destination.StartsWith($saveFull+'\',[StringComparison]::OrdinalIgnoreCase) -or $destination -ieq $saveFull){throw '备份位置不能位于所选存档内部。'}
+    if(-not(Test-Path -LiteralPath $destination)){New-Item -ItemType Directory -Path $destination -Force|Out-Null}
+    if(-not(Test-Path -LiteralPath $destination -PathType Container)){throw "备份位置无效：$destination"}
+    Write-StepEvent '扫描所选存档' '压缩必要存档文件' '完整保留该存档内部的地图分块、角色、车辆、世界状态和 mods.txt。'
+    $stamp=Get-TimeStamp
+    $safeName=($saveItem.Name -replace '[\\/:*?"<>|]','_')
+    $modeName=$saveItem.Parent.Name
+    $dest=Join-Path $destination (('PZ-save-{0}-{1}_{2}.zip' -f $modeName,$safeName,$stamp))
+    $files=@(Get-ChildItem -LiteralPath $saveFull -File -Recurse -Force|Sort-Object FullName)
+    if($files.Count -eq 0){throw '所选存档中没有文件。'}
+    $totalBytes=[int64](($files|Measure-Object Length -Sum).Sum)
+    $manifest=[ordered]@{
+        SchemaVersion=1;BackupKind='SelectedSave';Created=(Get-Date).ToString('o');GameVersion=$Config.Version;BuildID=$Config.BuildID
+        SaveMode=$modeName;SaveName=$saveItem.Name;SourceSave=$saveFull;FileCount=$files.Count;UncompressedBytes=$totalBytes
+        Included=@('所选存档目录内的全部文件：地图分块、角色数据库、车辆、世界状态、MOD 状态与 mods.txt')
+        Excluded=@('其它存档','本地化 MOD 资源','Logs/console.txt/logs.zip','Recording/Workshop/Crafting','全局 options.ini、Lua、InputBindings 与 Sandbox Presets')
+    }
+    Add-Type -AssemblyName System.IO.Compression,System.IO.Compression.FileSystem
+    $archive=[IO.Compression.ZipFile]::Open($dest,[IO.Compression.ZipArchiveMode]::Create)
+    try{
+        $entryRoot=('Saves/{0}/{1}' -f $modeName,$saveItem.Name)
+        foreach($file in $files){
+            $relative=$file.FullName.Substring($saveFull.Length).TrimStart('\') -replace '\\','/'
+            [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive,$file.FullName,($entryRoot+'/'+$relative),[IO.Compression.CompressionLevel]::Optimal)
+        }
+        $manifestEntry=$archive.CreateEntry('backup-manifest.json',[IO.Compression.CompressionLevel]::Optimal)
+        $stream=$manifestEntry.Open();$writer=New-Object IO.StreamWriter($stream,(New-Object Text.UTF8Encoding($false)))
+        try{$writer.Write(($manifest|ConvertTo-Json -Depth 8))}finally{$writer.Dispose();$stream.Dispose()}
+        $versionFile=Join-Path $Config.CachePath 'version.txt'
+        if(Test-Path -LiteralPath $versionFile -PathType Leaf){[void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive,$versionFile,'metadata/version.txt',[IO.Compression.CompressionLevel]::Optimal)}
+    }finally{$archive.Dispose()}
+    Write-StepEvent '计算备份 SHA-256' '写入备份清单' ("已压缩 {0} 个文件。" -f $files.Count)
     $hash=(Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash
-    [pscustomobject]@{Backup=$dest;SHA256=$hash;Bytes=(Get-Item -LiteralPath $dest).Length} | ConvertTo-Json | Set-Content -LiteralPath ($dest+'.json') -Encoding UTF8
-    Write-ManagerLog "独立缓存/存档备份完成：$dest" 'PASS'
+    [pscustomobject]@{Backup=$dest;SHA256=$hash;Bytes=(Get-Item -LiteralPath $dest).Length;Save=$saveFull;FileCount=$files.Count;UncompressedBytes=$totalBytes} | ConvertTo-Json | Set-Content -LiteralPath ($dest+'.json') -Encoding UTF8
+    Write-ManagerLog "所选存档备份完成：$dest（$($files.Count) 个文件）" 'PASS'
     Write-StepEvent '备份完成' '完成' ("文件：{0}" -f $dest)
 }
 
@@ -802,7 +819,6 @@ function Invoke-CreateFreeze {
     $script:ManagerRoot=$ManagerRoot
     $static=Invoke-StaticValidation ([pscustomobject]$config)
     if(-not $static.Pass){throw '静态隔离验证失败。'}
-    Invoke-SaveBackup ([pscustomobject]$config)
     $summary=[ordered]@{Environment=$envInfo;SourceStats=@{Game=$gameStats;Workshop=$wsStats;Cache=$cacheStats};Config=$config;CopyVerification=@{Game=$gameCopyResult;Mods=$modCopyResult};MemoryTuning=$memory;StaticValidation=$static}
     Write-JsonFile $summary (Join-Path $reports 'creation-summary.json') 15
     Write-ManagerLog "冻结环境创建完成：$freeze" 'PASS'
@@ -842,7 +858,7 @@ switch ($Action) {
             'Info' {$config|Format-List;Write-ManagerLog "冻结目录：$($config.FreezeRoot)"}
             'Launch' {[void](Invoke-Launch $config)}
             'TestLaunch' {[void](Invoke-Launch $config -Testing)}
-            'BackupSave' {Invoke-SaveBackup $config}
+            'BackupSave' {Invoke-SaveBackup $config $SavePath $BackupDestination}
             'RestoreSave' {Invoke-SafeRestore $config $BackupPath}
             'ValidateStatic' {[void](Invoke-StaticValidation $config)}
             'ViewLog' {Start-Process explorer.exe -ArgumentList $logDir}
