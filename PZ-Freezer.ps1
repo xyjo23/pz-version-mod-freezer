@@ -1,5 +1,5 @@
 ﻿[CmdletBinding()]
-param([switch]$SelfTest,[string]$SelfTestProfilePath,[string]$SelfTestTargetPath,[ValidateSet('Full','Incremental','Invalid')][string]$SelfTestExpectedTargetMode,[string]$SelfTestLibraryRoot,[int]$SelfTestExpectedProfileCount=-1,[switch]$SelfTestSelectFirstProfile,[string]$SelfTestScreenshotPath,[ValidateSet('Versions','Migration')][string]$SelfTestTab='Versions',[ValidateSet('Migration','Backup')][string]$SelfTestMode='Migration')
+param([switch]$SelfTest,[string]$SelfTestProfilePath,[string]$SelfTestTargetPath,[ValidateSet('Full','Incremental','Invalid')][string]$SelfTestExpectedTargetMode,[string]$SelfTestLibraryRoot,[int]$SelfTestExpectedProfileCount=-1,[switch]$SelfTestExpectedSteamEntry,[switch]$SelfTestDisableSteamDetection,[switch]$SelfTestSelectFirstProfile,[string]$SelfTestScreenshotPath,[ValidateSet('Versions','Migration')][string]$SelfTestTab='Versions',[ValidateSet('Migration','Backup')][string]$SelfTestMode='Migration')
 
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
@@ -9,6 +9,9 @@ $script:AppRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSCommandPath)).Tr
 $script:Manager = Join-Path $script:AppRoot 'tools\PZ-Freeze-Manager.ps1'
 $script:LibraryFile = Join-Path $script:AppRoot 'version-library.json'
 $script:Job = $null
+$script:SteamEnvironment = $null
+$script:SteamDetectionError = $null
+$script:SteamDetectionAttempted = $false
 
 if(-not(Test-Path -LiteralPath $script:Manager -PathType Leaf)){
     [System.Windows.MessageBox]::Show("缺少核心文件：$script:Manager",'PZ Version & Mod Freezer','OK','Error')|Out-Null
@@ -219,12 +222,24 @@ function Set-Busy([bool]$Busy,[string]$Text){
     $BusyBar.IsIndeterminate=$Busy
     $BusyBar.Visibility=if($Busy){'Visible'}else{'Hidden'}
     $StatusText.Text=$Text
-    foreach($control in @($DetectButton,$LaunchButton,$VerifyButton,$OpenSelectedProfileButton,$AddLibraryRootButton,$BackupButton,$MigrationPreviewButton,$MigrateButton,$RollbackMigrationButton,$BrowseTargetProfileButton,$InspectTargetButton,$UseProfileButton,$RefreshButton,$OperationModeBox,$RefreshSavesButton,$BrowseBackupDestinationButton)){
+    foreach($control in @($ProfilesBox,$DetectButton,$LaunchButton,$VerifyButton,$OpenSelectedProfileButton,$AddLibraryRootButton,$BackupButton,$MigrationPreviewButton,$MigrateButton,$RollbackMigrationButton,$BrowseTargetProfileButton,$InspectTargetButton,$UseProfileButton,$RefreshButton,$OperationModeBox,$RefreshSavesButton,$BrowseBackupDestinationButton)){
         $control.IsEnabled=-not $Busy
     }
+    if(-not $Busy -and $ProfilesBox.SelectedItem -and $ProfilesBox.SelectedItem.IsSteam){$UseProfileButton.IsEnabled=$false}
 }
 
 function Quote-Display([string]$Path){if($Path){'"'+$Path+'"'}else{'（未检测到）'}}
+
+function Get-DetectedSteamVersion([switch]$Refresh){
+    if($SelfTestDisableSteamDetection){$script:SteamDetectionAttempted=$true;$script:SteamEnvironment=$null;$script:SteamDetectionError='自检模拟：未检测到 Steam 原版。';return $null}
+    if($script:SteamDetectionAttempted -and -not $Refresh){return $script:SteamEnvironment}
+    $script:SteamDetectionAttempted=$true;$script:SteamEnvironment=$null;$script:SteamDetectionError=$null
+    try{
+        $raw=& powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $script:Manager -Action DetectSteam 2>&1|Out-String
+        $script:SteamEnvironment=$raw|ConvertFrom-Json
+    }catch{$script:SteamDetectionError=$_.Exception.Message}
+    $script:SteamEnvironment
+}
 
 function Invoke-Detection {
     Set-Busy $true '正在检测'
@@ -433,7 +448,22 @@ function New-VersionLibraryItem($Config,[string]$ConfigPath){
     [pscustomobject]@{
         Display=('B{0} · Build {1} · {2} MOD · {3}' -f $Config.Version,$Config.BuildID,$mods,$health)
         ConfigPath=$ConfigPath;FreezeRoot=[string]$Config.FreezeRoot;GamePath=[string]$Config.GamePath;CachePath=[string]$Config.CachePath
-        Version=[string]$Config.Version;BuildID=[string]$Config.BuildID;Created=$created;ModCount=$mods;Healthy=$healthy;Health=$health;Issues=@($issues)
+        Version=[string]$Config.Version;BuildID=[string]$Config.BuildID;Created=$created;ModCount=$mods;Healthy=$healthy;Health=$health;Issues=@($issues);IsSteam=$false;Detected=$true;SortPriority=0
+    }
+}
+
+function New-SteamVersionItem {
+    $envInfo=Get-DetectedSteamVersion -Refresh
+    if(-not $envInfo){
+        $reason=if($script:SteamDetectionError){$script:SteamDetectionError}else{'未检测到 Steam 管理的 Project Zomboid。'}
+        return [pscustomobject]@{Display='Steam 原版 · 未检测到';ConfigPath=$null;FreezeRoot=$null;GamePath=$null;CachePath=$null;WorkshopPath=$null;Version='未知';BuildID='未知';Created=[datetime]::MaxValue;ModCount=0;Healthy=$false;Health='未检测到';Issues=@($reason);IsSteam=$true;Detected=$false;SortPriority=100}
+    }
+    $projects=0
+    if($envInfo.WorkshopExists -and (Test-Path -LiteralPath $envInfo.Workshop -PathType Container)){$projects=@(Get-ChildItem -LiteralPath $envInfo.Workshop -Directory -ErrorAction SilentlyContinue).Count}
+    [pscustomobject]@{
+        Display=('Steam 原版 · B{0} · Build {1} · 已检测' -f $envInfo.Version,$envInfo.BuildID)
+        ConfigPath=$null;FreezeRoot=$null;GamePath=[string]$envInfo.Game;CachePath=[string]$envInfo.Cache;WorkshopPath=[string]$envInfo.Workshop
+        Version=[string]$envInfo.Version;BuildID=[string]$envInfo.BuildID;Created=[datetime]::MaxValue;ModCount=$projects;Healthy=$true;Health='Steam 管理';Issues=@();IsSteam=$true;Detected=$true;SortPriority=100
     }
 }
 
@@ -450,6 +480,20 @@ function Read-VersionConfigForLibrary([string]$ConfigPath){
 function Update-SelectedProfileDetails {
     $item=$ProfilesBox.SelectedItem
     if(-not $item){$SelectedVersionTitleText.Text='选择一个版本';$ProfileDetailsText.Text='尚未发现冻结版本。请使用右上角“添加版本”。';return}
+    if($item.IsSteam){
+        $SelectedVersionTitleText.Text='Steam 原版'
+        if($item.Detected){
+            $versionLabel=if($item.Version -and $item.Version -ne 'unknown'){$item.Version}else{'版本号未知'}
+            $ProfileDetailsText.Text=("游戏版本 {0}   ·   Steam BuildID {1}   ·   Workshop 项目 {2}`n状态：由 Steam 管理   ·   启动时使用 Steam 原版存档与配置`n{3}" -f $versionLabel,$item.BuildID,$item.ModCount,$item.GamePath)
+        }else{
+            $ProfileDetailsText.Text=("未检测到 Steam 管理的 Project Zomboid（AppID 108600）。`n{0}`n请确认 Steam 与游戏已安装，然后点击右上角的刷新按钮。" -f ($item.Issues -join '；'))
+        }
+        $UseProfileButton.IsEnabled=$false
+        $UseProfileButton.Content='无需设为当前'
+        $LaunchButton.Content=if($item.Detected){'通过 Steam 启动'}else{'Steam 原版未检测到'}
+        return
+    }
+    $UseProfileButton.Content='设为当前';$UseProfileButton.IsEnabled=$true;$LaunchButton.Content='启动所选版本'
     $created=if($item.Created -and $item.Created -ne [datetime]::MinValue){$item.Created.ToString('yyyy-MM-dd HH:mm')}else{'未知'}
     $problem=if($item.Healthy){'无'}else{($item.Issues -join '；')}
     $SelectedVersionTitleText.Text=("Build {0}" -f $item.Version)
@@ -458,6 +502,8 @@ function Update-SelectedProfileDetails {
 
 function Refresh-Profiles {
     $ProfilesBox.Items.Clear();$seen=@{};$items=New-Object System.Collections.Generic.List[object]
+    $steamItem=New-SteamVersionItem;$items.Add($steamItem)
+    if(-not $steamItem.Detected){Add-Log ("[提醒] Steam 原版未检测到：{0}" -f ($steamItem.Issues -join '；'))}
     $currentPath=Join-Path $script:AppRoot 'current-freeze.json'
     $current=if(Test-Path -LiteralPath $currentPath){try{Get-Content -LiteralPath $currentPath -Raw|ConvertFrom-Json}catch{$null}}else{$null}
     $roots=@(Get-VersionLibraryRoots)
@@ -476,14 +522,16 @@ function Refresh-Profiles {
         }catch{Add-Log "[警告] 当前版本配置不可用：$($_.Exception.Message)"}
     }
     $selected=-1
-    foreach($item in @($items|Sort-Object -Property @{Expression='Created';Descending=$true},@{Expression='Version';Descending=$true})){
+    foreach($item in @($items|Sort-Object -Property @{Expression='SortPriority';Descending=$true},@{Expression='Created';Descending=$true},@{Expression='Version';Descending=$true})){
         [void]$ProfilesBox.Items.Add($item)
-        if($current -and $current.FreezeRoot -ieq $item.FreezeRoot){$selected=$ProfilesBox.Items.Count-1}
+        if(-not $item.IsSteam -and $current -and $current.FreezeRoot -ieq $item.FreezeRoot){$selected=$ProfilesBox.Items.Count-1}
     }
     if($current){$TargetProfileBox.Text=$current.FreezeRoot;$script:TargetMode='Incremental';$MigrationDecisionText.Text='迁移方式：增量迁移（当前已有冻结版本）。'}
     elseif(-not $TargetProfileBox.Text -or $TargetProfileBox.Text -eq '尚未选择迁移目标'){$TargetProfileBox.Text='尚未选择迁移目标';$script:TargetMode='Unknown'}
     if($ProfilesBox.Items.Count -gt 0){$ProfilesBox.SelectedIndex=if($selected -ge 0){$selected}else{0}}else{$ProfilesBox.SelectedIndex=-1}
-    $LibrarySummaryText.Text=("已扫描 {0} 个目录，发现 {1} 个冻结版本。" -f $roots.Count,$ProfilesBox.Items.Count)
+    $frozenCount=@($items|Where-Object{-not $_.IsSteam}).Count
+    $steamSummary=if($steamItem.Detected){'Steam 原版已检测'}else{'Steam 原版未检测到'}
+    $LibrarySummaryText.Text=("{0}；已扫描 {1} 个目录，发现 {2} 个冻结版本。" -f $steamSummary,$roots.Count,$frozenCount)
     Update-SelectedProfileDetails
     Refresh-Saves
 }
@@ -491,6 +539,7 @@ function Refresh-Profiles {
 function Use-SelectedProfile {
     $item=$ProfilesBox.SelectedItem
     if(-not $item){[System.Windows.MessageBox]::Show('请先从版本库选择一个冻结版本。','PZ Freezer')|Out-Null;return $false}
+    if($item.IsSteam){if(-not $SelfTest){[System.Windows.MessageBox]::Show('Steam 原版由 Steam 管理，无需设为当前冻结版本。','PZ Freezer','OK','Information')|Out-Null};return $false}
     try{
         $cfg=Get-Content -LiteralPath $item.ConfigPath -Raw|ConvertFrom-Json
         if($item.ConfigPath -like '*\metadata\freeze.json'){$cfg=Get-FrozenConfigFromFolder (Split-Path -Parent (Split-Path -Parent $item.ConfigPath))}
@@ -507,18 +556,30 @@ function Use-SelectedProfile {
 function Launch-SelectedProfile {
     $item=$ProfilesBox.SelectedItem
     if(-not $item){[System.Windows.MessageBox]::Show('请先从版本库选择一个版本。','启动版本','OK','Information')|Out-Null;return}
+    if($item.IsSteam){
+        if(-not $item.Detected){[System.Windows.MessageBox]::Show(($item.Issues -join '；'),'Steam 原版未检测到','OK','Error')|Out-Null;return}
+        Start-Process 'steam://run/108600';Add-Log '[启动] 已请求 Steam 启动 Project Zomboid 原版。';Set-Step '已请求 Steam 启动' '等待 Steam 启动游戏';$StatusText.Text='已交给 Steam';return
+    }
     if(-not $item.Healthy){[System.Windows.MessageBox]::Show(("所选版本需要修复：{0}" -f ($item.Issues -join '；')),'无法启动','OK','Error')|Out-Null;return}
     if(Use-SelectedProfile){Start-ManagerAction 'Launch'}
 }
 
 function Verify-SelectedProfile {
+    $item=$ProfilesBox.SelectedItem
+    if($item -and $item.IsSteam){
+        if(-not $item.Detected){[System.Windows.MessageBox]::Show(($item.Issues -join '；'),'Steam 原版未检测到','OK','Error')|Out-Null;return}
+        $answer=[System.Windows.MessageBox]::Show('将打开 Steam 的 Project Zomboid 文件校验。Steam 可能重新下载或更新原版文件，是否继续？','校验 Steam 原版','YesNo','Question')
+        if($answer -eq 'Yes'){Start-Process 'steam://validate/108600';Add-Log '[校验] 已请求 Steam 校验 Project Zomboid 原版文件。';$StatusText.Text='已请求 Steam 校验'}
+        return
+    }
     if(Use-SelectedProfile){Start-ManagerAction 'Verify'}
 }
 
 function Open-SelectedProfile {
     $item=$ProfilesBox.SelectedItem
-    if(-not $item -or -not(Test-Path -LiteralPath $item.FreezeRoot -PathType Container)){[System.Windows.MessageBox]::Show('所选版本目录不存在。','打开版本目录','OK','Error')|Out-Null;return}
-    Start-Process explorer.exe -ArgumentList $item.FreezeRoot
+    $path=if($item -and $item.IsSteam){$item.GamePath}elseif($item){$item.FreezeRoot}else{$null}
+    if(-not $path -or -not(Test-Path -LiteralPath $path -PathType Container)){[System.Windows.MessageBox]::Show('所选版本目录不存在。','打开版本目录','OK','Error')|Out-Null;return}
+    Start-Process explorer.exe -ArgumentList $path
 }
 
 function Start-AutoPreview {
@@ -645,8 +706,10 @@ Update-OperationMode
 if($SelfTest){
     if(-not $window -or -not $MainTabs -or $MainTabs.Items.Count -ne 2 -or -not $MigrateButton -or -not $LogBox -or -not $ProfilesBox -or -not $SelectedVersionTitleText -or -not $ProfileDetailsText -or -not $OperationModeBox -or -not $BackupModePanel){throw 'GUI 控件初始化失败。'}
     "TAB_LAYOUT_PASS=$($MainTabs.Items.Count)"
-    if($SelfTestExpectedProfileCount -ge 0){if($ProfilesBox.Items.Count -ne $SelfTestExpectedProfileCount){throw "Expected $SelfTestExpectedProfileCount profiles but found $($ProfilesBox.Items.Count)."};"LIBRARY_COUNT_PASS=$($ProfilesBox.Items.Count)"}
-    if($SelfTestSelectFirstProfile){$testIndex=0;for($i=0;$i-lt$ProfilesBox.Items.Count;$i++){if($ProfilesBox.Items[$i].Healthy){$testIndex=$i;break}};$ProfilesBox.SelectedIndex=$testIndex;$expectedRoot=$ProfilesBox.SelectedItem.FreezeRoot;if(-not(Use-SelectedProfile)){throw 'Library selection self-test failed.'};$selectedConfig=Get-Content -LiteralPath (Join-Path $script:AppRoot 'current-freeze.json') -Raw|ConvertFrom-Json;if($selectedConfig.FreezeRoot -ine $expectedRoot){throw 'Selected profile was not written as current.'};"LIBRARY_SELECTION_PASS=$expectedRoot"}
+    $selfTestSteamItems=@($ProfilesBox.Items|Where-Object{$_.IsSteam});$selfTestFrozenItems=@($ProfilesBox.Items|Where-Object{-not $_.IsSteam})
+    if($SelfTestExpectedSteamEntry){if($selfTestSteamItems.Count -ne 1){throw "Expected one Steam entry but found $($selfTestSteamItems.Count)."};"STEAM_ENTRY_PASS=$($selfTestSteamItems[0].Health)"}
+    if($SelfTestExpectedProfileCount -ge 0){if($selfTestFrozenItems.Count -ne $SelfTestExpectedProfileCount){throw "Expected $SelfTestExpectedProfileCount frozen profiles but found $($selfTestFrozenItems.Count)."};"LIBRARY_COUNT_PASS=$($selfTestFrozenItems.Count)"}
+    if($SelfTestSelectFirstProfile){$testIndex=-1;for($i=0;$i-lt$ProfilesBox.Items.Count;$i++){if(-not $ProfilesBox.Items[$i].IsSteam -and $ProfilesBox.Items[$i].Healthy){$testIndex=$i;break}};if($testIndex -lt 0){throw 'No healthy frozen profile was available for selection self-test.'};$ProfilesBox.SelectedIndex=$testIndex;$expectedRoot=$ProfilesBox.SelectedItem.FreezeRoot;if(-not(Use-SelectedProfile)){throw 'Library selection self-test failed.'};$selectedConfig=Get-Content -LiteralPath (Join-Path $script:AppRoot 'current-freeze.json') -Raw|ConvertFrom-Json;if($selectedConfig.FreezeRoot -ine $expectedRoot){throw 'Selected profile was not written as current.'};"LIBRARY_SELECTION_PASS=$expectedRoot"}
     if($SelfTestProfilePath){
         $testConfig=Get-FrozenConfigFromFolder $SelfTestProfilePath
         if(-not $testConfig.FreezeRoot -or -not $testConfig.GamePath -or -not $testConfig.CachePath){throw '冻结位置解析自检失败。'}

@@ -1,6 +1,6 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateSet('Detect','Preflight','Create','PreviewMigration','Migrate','RollbackMigration','Verify','Info','Launch','TestLaunch','BackupSave','RestoreSave','ValidateStatic','ViewLog')]
+    [ValidateSet('Detect','DetectSteam','Preflight','Create','PreviewMigration','Migrate','RollbackMigration','Verify','Info','Launch','TestLaunch','BackupSave','RestoreSave','ValidateStatic','ViewLog')]
     [string]$Action = 'Info',
     [string]$ManagerRoot,
     [string]$BackupPath,
@@ -63,6 +63,36 @@ function Get-SteamLibraries {
         }
     }
     @($result)
+}
+
+function Get-SteamPZVersion {
+    $steam=Get-SteamInstall
+    foreach($library in @(Get-SteamLibraries $steam)){
+        $steamApps=Join-Path $library 'steamapps'
+        $manifest=Join-Path $steamApps 'appmanifest_108600.acf'
+        if(-not(Test-Path -LiteralPath $manifest -PathType Leaf)){continue}
+        $acf=Get-Content -LiteralPath $manifest -Raw
+        $installName=[regex]::Match($acf,'"installdir"\s+"([^"]+)"').Groups[1].Value
+        $build=[regex]::Match($acf,'"buildid"\s+"([^"]+)"').Groups[1].Value
+        if(-not $installName){continue}
+        $game=Join-Path (Join-Path $steamApps 'common') $installName
+        $exe=Join-Path $game 'ProjectZomboid64.exe'
+        if(-not(Test-Path -LiteralPath $exe -PathType Leaf)){continue}
+        $cache=Join-Path $env:USERPROFILE 'Zomboid'
+        $workshop=Join-Path $steamApps 'workshop\content\108600'
+        $version='unknown';$fullVersion=''
+        $versionFile=Join-Path $cache 'version.txt'
+        if(Test-Path -LiteralPath $versionFile -PathType Leaf){
+            $fullVersion=(Get-Content -LiteralPath $versionFile -Raw).Trim()
+            $match=[regex]::Match($fullVersion,'(?m)^(\d+\.\d+\.\d+)')
+            if($match.Success){$version=$match.Groups[1].Value}
+        }
+        return [pscustomobject]@{
+            SteamPath=$steam;Library=$library;Manifest=$manifest;Game=$game;Executable=$exe;Workshop=$workshop;Cache=$cache
+            BuildID=if($build){$build}else{'unknown'};Version=$version;FullVersion=$fullVersion;WorkshopExists=(Test-Path -LiteralPath $workshop -PathType Container)
+        }
+    }
+    throw '未检测到 Steam 管理的 Project Zomboid（AppID 108600）。'
 }
 
 function Get-PZEnvironment {
@@ -838,6 +868,11 @@ function Invoke-CreateFreeze {
 
 if($Action -eq 'Detect'){
     Get-PZEnvironment | ConvertTo-Json -Depth 6
+    exit 0
+}
+
+if($Action -eq 'DetectSteam'){
+    Get-SteamPZVersion | ConvertTo-Json -Depth 6
     exit 0
 }
 

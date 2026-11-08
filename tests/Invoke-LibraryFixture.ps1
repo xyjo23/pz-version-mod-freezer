@@ -24,7 +24,7 @@ try{
         $config|ConvertTo-Json -Depth 5|Set-Content -LiteralPath (Join-Path $metadata 'freeze.json') -Encoding UTF8
     }
     [ordered]@{SchemaVersion=1;Updated=(Get-Date).ToString('o');LibraryRoots=@($library)}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $app 'version-library.json') -Encoding UTF8
-    & powershell.exe -NoLogo -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $app 'PZ-Freezer.ps1') -SelfTest -SelfTestExpectedProfileCount 2 -SelfTestSelectFirstProfile
+    & powershell.exe -NoLogo -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $app 'PZ-Freezer.ps1') -SelfTest -SelfTestExpectedProfileCount 2 -SelfTestExpectedSteamEntry -SelfTestDisableSteamDetection -SelfTestSelectFirstProfile
     if($LASTEXITCODE -ne 0){throw "Library fixture exit code: $LASTEXITCODE"}
     'LIBRARY_FIXTURE_TEST_PASS'
 }finally{

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.3-preview - 2026-11-08
+
+- Added the live Steam-managed Project Zomboid installation to the version list by default.
+- Detects Steam libraries, AppID 108600, game version, BuildID, Workshop project count and actual paths at startup.
+- Keeps a visible "Steam original not detected" card with the detection error when discovery fails.
+- Added direct Steam launch, Steam file validation and game-folder access for the Steam entry.
+- Keeps the Steam entry ephemeral and separate from frozen-version configuration and migration targets.
+- Added detected and not-detected UI self-tests for the Steam entry.
+
 ## 0.5.2-preview - 2026-11-08
 
 - Reworked the interface into a compact dark launcher layout with top navigation.
