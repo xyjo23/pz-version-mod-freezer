@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.1-preview - 2026-11-08
+
+- Split the interface into a primary Version tab and a secondary Migration & Freeze Tool tab.
+- Moved Add Version to the upper-right corner of the Version tab.
+- Replaced the compact version selector with a persistent version list and dedicated detail panel.
+- Kept launch, verification, folder access and current-version selection together in the Version tab.
+- Moved Steam sources, migration target, automatic migration, rollback and save backup into the migration tab.
+- Kept task progress and user-facing logs in a shared status area for both workflows.
+
 ## 0.5.0-preview - 2026-11-08
 
 - Added a persistent multi-directory frozen-version library.

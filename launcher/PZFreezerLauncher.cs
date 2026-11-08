@@ -8,8 +8,8 @@ using System.Windows.Forms;
 [assembly: AssemblyDescription("Portable Project Zomboid version and mod snapshot manager")]
 [assembly: AssemblyProduct("PZ Version & Mod Freezer")]
 [assembly: AssemblyCompany("xyjo23")]
-[assembly: AssemblyVersion("0.5.0.0")]
-[assembly: AssemblyFileVersion("0.5.0.0")]
+[assembly: AssemblyVersion("0.5.1.0")]
+[assembly: AssemblyFileVersion("0.5.1.0")]
 
 internal static class PZFreezerLauncher
 {
