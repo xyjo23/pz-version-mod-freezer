@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0-preview - 2026-11-08
+
+- Added fast migration preview using path existence and file-size comparison.
+- Added missing-only game file repair for exact matching game version/BuildID.
+- Added missing Workshop Mod ID import into an existing frozen profile.
+- Added duplicate Mod ID and dependency guards.
+- Added automatic save backup before migration.
+- Added transaction records and safe rollback of the latest migration.
+- Added incremental SHA-256 baseline updates for newly transferred files only.
+- Added WPF controls for preview, migration and rollback.
+- Added an isolated end-to-end migration/rollback fixture test.
+
 ## 0.1.0-preview - 2026-11-07
 
 - Added WPF one-click interface and portable CMD launcher.

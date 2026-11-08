@@ -1,6 +1,6 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateSet('Detect','Preflight','Create','Verify','Info','Launch','TestLaunch','BackupSave','RestoreSave','ValidateStatic','ViewLog')]
+    [ValidateSet('Detect','Preflight','Create','PreviewMigration','Migrate','RollbackMigration','Verify','Info','Launch','TestLaunch','BackupSave','RestoreSave','ValidateStatic','ViewLog')]
     [string]$Action = 'Info',
     [string]$ManagerRoot,
     [string]$BackupPath,
@@ -8,6 +8,7 @@ param(
     [string]$SourceWorkshop,
     [string]$SourceCache,
     [string]$SourceManifest,
+    [switch]$ConfirmedExistingTarget,
     [int]$TestSeconds = 45
 )
 
@@ -292,6 +293,226 @@ function Set-SafeFrozenMemory {
     Write-JsonFile $result (Join-Path $ReportPath ('runtime-memory_{0}.json' -f (Get-TimeStamp)))
     if($result.Applied){Write-ManagerLog "已仅对冻结副本应用安全内存上限：$originalMB MB -> $recommendedMB MB" 'PASS'}
     [pscustomobject]$result
+}
+
+function Get-EffectiveLocalModInfo {
+    param([System.IO.DirectoryInfo]$ModRoot,[version]$GameVersion)
+    $versioned=@()
+    foreach($dir in @(Get-ChildItem -LiteralPath $ModRoot.FullName -Directory -ErrorAction SilentlyContinue)){
+        if($dir.Name -notmatch '^\d+(?:\.\d+){0,3}$'){continue}
+        $versionText=if($dir.Name -match '^\d+$'){$dir.Name+'.0'}else{$dir.Name}
+        try{$v=[version]$versionText}catch{continue}
+        $info=Join-Path $dir.FullName 'mod.info'
+        if($v -le $GameVersion -and (Test-Path -LiteralPath $info -PathType Leaf)){$versioned+=[pscustomobject]@{Version=$v;Path=$info}}
+    }
+    if($versioned.Count -gt 0){return ($versioned|Sort-Object Version -Descending|Select-Object -First 1).Path}
+    foreach($candidate in @((Join-Path $ModRoot.FullName 'common\mod.info'),(Join-Path $ModRoot.FullName 'mod.info'))){
+        if(Test-Path -LiteralPath $candidate -PathType Leaf){return $candidate}
+    }
+    $null
+}
+
+function Get-ModInfoId {
+    param([string]$InfoPath)
+    if(-not $InfoPath){return $null}
+    $text=Get-Content -LiteralPath $InfoPath -Raw
+    $match=[regex]::Match($text,'(?im)^\s*id\s*=\s*(.*?)\s*$')
+    if($match.Success){$match.Groups[1].Value.Trim().Trim("'",'"')}else{$null}
+}
+
+function Get-TargetModIds {
+    param([string]$ModsRoot,[version]$GameVersion)
+    $ids=New-Object System.Collections.Generic.List[string]
+    if(Test-Path -LiteralPath $ModsRoot -PathType Container){
+        foreach($root in @(Get-ChildItem -LiteralPath $ModsRoot -Directory -ErrorAction SilentlyContinue)){
+            $id=Get-ModInfoId (Get-EffectiveLocalModInfo -ModRoot $root -GameVersion $GameVersion)
+            if($id -and -not $ids.Contains($id)){$ids.Add($id)}
+        }
+    }
+    @($ids)
+}
+
+function Get-SourceModInventory {
+    param($Environment,[version]$GameVersion)
+    $empty=Join-Path $env:TEMP ('pz_migration_empty_{0}.txt' -f (Get-TimeStamp))
+    Set-Content -LiteralPath $empty -Value '' -Encoding UTF8
+    try{
+        $analyzer=Join-Path $PSScriptRoot 'Analyze-PZMods.ps1'
+        (& $analyzer -WorkshopRoot $Environment.Workshop -SaveModsFile $empty -GameVersion $GameVersion|ConvertFrom-Json)
+    }finally{Remove-Item -LiteralPath $empty -Force -ErrorAction SilentlyContinue}
+}
+
+function Get-MigrationPlan {
+    param($Config)
+    $envInfo=Get-PZEnvironment
+    $targetVersion=[version]$Config.Version
+    $targetMods=Join-Path $Config.CachePath 'mods'
+    $targetIds=@(Get-TargetModIds -ModsRoot $targetMods -GameVersion $targetVersion)
+    $analysis=Get-SourceModInventory -Environment $envInfo -GameVersion $targetVersion
+    $sourceInventory=@($analysis.Inventory)
+    $rawMissingMods=@($sourceInventory|Where-Object{$_.ModID -and $_.ModID -notin $targetIds})
+    $duplicates=@($rawMissingMods|Group-Object ModID|Where-Object Count -gt 1|ForEach-Object{$_.Name})
+    $missingMods=@($rawMissingMods|Group-Object ModID|ForEach-Object{$_.Group|Select-Object -First 1}|Sort-Object ModID)
+    $availableIds=@($targetIds+@($sourceInventory.ModID)|Where-Object{$_}|Select-Object -Unique)
+    $missingDependencies=@()
+    foreach($mod in $missingMods){
+        foreach($required in @($mod.Requires)){
+            if($required -and $required -notin $availableIds){$missingDependencies+=$required}
+        }
+    }
+    $missingDependencies=@($missingDependencies|Select-Object -Unique)
+    $sameVersion=([string]$Config.Version -eq [string]$envInfo.Version)
+    $sameBuild=($sameVersion -and (($Config.BuildID -eq $envInfo.BuildID) -or $Config.BuildID -eq 'unknown' -or $envInfo.BuildID -eq 'unknown'))
+    $gameMissing=New-Object System.Collections.Generic.List[string]
+    $gameSizeMismatch=New-Object System.Collections.Generic.List[string]
+    if($sameBuild){
+        $sourceRoot=[IO.Path]::GetFullPath($envInfo.Game).TrimEnd('\')
+        foreach($file in @(Get-ChildItem -LiteralPath $sourceRoot -File -Recurse -Force|Where-Object{$_.Name -notlike 'hs_err_pid*.log' -and $_.Name -notlike 'replay_pid*.log'})){
+            $relative=$file.FullName.Substring($sourceRoot.Length).TrimStart('\')
+            $dest=Join-Path $Config.GamePath $relative
+            if(-not(Test-Path -LiteralPath $dest -PathType Leaf)){$gameMissing.Add($relative)}
+            elseif((Get-Item -LiteralPath $dest).Length -ne $file.Length){$gameSizeMismatch.Add($relative)}
+        }
+    }
+    [pscustomobject]@{
+        Time=(Get-Date).ToString('o');Environment=$envInfo;TargetProfile=$Config.FreezeRoot
+        TargetHasGame=(Test-Path -LiteralPath (Join-Path $Config.GamePath 'ProjectZomboid64.exe') -PathType Leaf)
+        TargetHasMods=((Test-Path -LiteralPath $targetMods -PathType Container) -and @(Get-ChildItem -LiteralPath $targetMods -Directory -ErrorAction SilentlyContinue).Count -gt 0)
+        TargetGameVersion=$Config.Version;SourceGameVersion=$envInfo.Version;TargetBuildID=$Config.BuildID;SourceBuildID=$envInfo.BuildID
+        GameBuildCompatible=$sameBuild;GameMissing=@($gameMissing);GameSizeMismatch=@($gameSizeMismatch)
+        TargetModCount=$targetIds.Count;SourceModCount=$sourceInventory.Count;MissingMods=$missingMods
+        DuplicateMissingModIds=$duplicates;MissingDependencies=$missingDependencies
+        FullIntegrityChecked=$false;ComparisonMode='path-existence-and-size-only'
+    }
+}
+
+function Backup-MigrationMetadata {
+    param($Config,[string]$MigrationDir)
+    $before=Join-Path $MigrationDir 'before';New-Item -ItemType Directory -Path $before -Force|Out-Null
+    $targets=@(
+        (Join-Path $Config.ManifestPath 'game.sha256.csv'),(Join-Path $Config.ManifestPath 'mods.sha256.csv'),
+        (Join-Path $Config.FreezeRoot 'metadata\mod-copy-map.csv'),(Join-Path $Config.FreezeRoot 'metadata\mod-inventory.csv'),
+        (Join-Path $Config.FreezeRoot 'metadata\freeze.json'),(Join-Path $ManagerRoot 'current-freeze.json')
+    )
+    $rows=@();$index=0
+    foreach($target in $targets){
+        $index++;$exists=Test-Path -LiteralPath $target -PathType Leaf;$backup=Join-Path $before (('{0:D2}_' -f $index)+(Split-Path -Leaf $target))
+        if($exists){Copy-Item -LiteralPath $target -Destination $backup}
+        $rows+=[pscustomobject]@{Target=$target;OriginalExists=$exists;Backup=$backup}
+    }
+    @($rows)
+}
+
+function Restore-MigrationMetadata {
+    param([object[]]$Rows,$Config)
+    $profileRoot=[IO.Path]::GetFullPath($Config.FreezeRoot).TrimEnd('\')+'\'
+    $currentConfig=[IO.Path]::GetFullPath((Join-Path $ManagerRoot 'current-freeze.json'))
+    foreach($row in $Rows){
+        $target=[IO.Path]::GetFullPath($row.Target)
+        if(-not($target.StartsWith($profileRoot,[StringComparison]::OrdinalIgnoreCase) -or $target -ieq $currentConfig)){throw "元数据回迁目标越界：$target"}
+        if($row.OriginalExists){
+            $backup=Assert-PathInsideProfile $row.Backup $Config.FreezeRoot
+            Copy-Item -LiteralPath $backup -Destination $target -Force
+        }elseif(Test-Path -LiteralPath $target -PathType Leaf){Remove-Item -LiteralPath $target -Force}
+    }
+}
+
+function Assert-PathInsideProfile {
+    param([string]$Path,[string]$ProfileRoot)
+    $full=[IO.Path]::GetFullPath($Path)
+    $root=[IO.Path]::GetFullPath($ProfileRoot).TrimEnd('\')+'\'
+    if(-not $full.StartsWith($root,[StringComparison]::OrdinalIgnoreCase)){throw "迁移记录包含越界路径：$full"}
+    $full
+}
+
+function Invoke-IncrementalMigration {
+    param($Config)
+    Assert-NoPZProcess
+    $plan=Get-MigrationPlan $Config
+    if(($plan.TargetHasGame -or $plan.TargetHasMods) -and -not $ConfirmedExistingTarget){throw '目标位置已包含游戏或 MOD。必须由用户明确确认后才能增量迁移。'}
+    if($plan.DuplicateMissingModIds.Count -gt 0){throw ('来源中存在重复 Mod ID，无法自动选择：'+($plan.DuplicateMissingModIds -join ', '))}
+    if($plan.MissingDependencies.Count -gt 0){throw ('缺少 MOD 依赖：'+($plan.MissingDependencies -join ', '))}
+    if(-not $plan.GameBuildCompatible){Write-ManagerLog "Steam 游戏版本/BuildID 与冻结版不同；不会混合游戏文件，只迁移兼容 Mod。" 'WARN'}
+    Invoke-SaveBackup $Config
+    $stamp=Get-TimeStamp;$migrationRoot=Join-Path $Config.FreezeRoot 'migrations';$migrationDir=Join-Path $migrationRoot $stamp
+    New-Item -ItemType Directory -Path $migrationDir -Force|Out-Null
+    $pointer=Join-Path $migrationRoot 'last-migration.json'
+    $previous=if(Test-Path -LiteralPath $pointer -PathType Leaf){(Get-Content -LiteralPath $pointer -Raw|ConvertFrom-Json).MigrationPath}else{$null}
+    $metadataBackup=@(Backup-MigrationMetadata -Config $Config -MigrationDir $migrationDir)
+    $added=New-Object System.Collections.Generic.List[object]
+    $newMaps=New-Object System.Collections.Generic.List[object]
+    try{
+        foreach($relative in @($plan.GameMissing)){
+            $source=Join-Path $plan.Environment.Game $relative;$dest=Join-Path $Config.GamePath $relative
+            $parent=Split-Path -Parent $dest;if(-not(Test-Path -LiteralPath $parent)){New-Item -ItemType Directory -Path $parent -Force|Out-Null}
+            Copy-Item -LiteralPath $source -Destination $dest
+            $file=Get-Item -LiteralPath $dest
+            $added.Add([pscustomobject]@{Category='Game';Path=$file.FullName;RelativePath=$relative;ManifestPath=$relative;Length=[int64]$file.Length;SHA256=(Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash})
+        }
+        foreach($mod in @($plan.MissingMods)){
+            $baseName=('WS{0}__{1}' -f $mod.WorkshopID,($mod.ModFolder -replace '[\\/:*?"<>|]','_'))
+            $destName=$baseName;$dest=Join-Path (Join-Path $Config.CachePath 'mods') $destName
+            if(Test-Path -LiteralPath $dest){$destName=$baseName+'__import_'+$stamp;$dest=Join-Path (Join-Path $Config.CachePath 'mods') $destName}
+            Invoke-RobocopySafe $mod.SourcePath $dest ('import_mod_'+$mod.WorkshopID+'_'+$mod.ModFolder)
+            $newMaps.Add([pscustomobject]@{WorkshopID=$mod.WorkshopID;SourcePath=$mod.SourcePath;DestinationName=$destName;DestinationPath=$dest})
+            $destRoot=[IO.Path]::GetFullPath($dest).TrimEnd('\')
+            foreach($file in @(Get-ChildItem -LiteralPath $destRoot -File -Recurse -Force|Sort-Object FullName)){
+                $inside=$file.FullName.Substring($destRoot.Length).TrimStart('\')
+                $added.Add([pscustomobject]@{Category='Mod';Path=$file.FullName;RelativePath=$file.FullName.Substring([IO.Path]::GetFullPath($Config.FreezeRoot).TrimEnd('\').Length).TrimStart('\');ManifestPath=(Join-Path $destName $inside);Length=[int64]$file.Length;SHA256=(Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash})
+            }
+        }
+        $gameManifest=Join-Path $Config.ManifestPath 'game.sha256.csv';$gameRows=@();if(Test-Path -LiteralPath $gameManifest){$gameRows=@(Import-Csv -LiteralPath $gameManifest)}
+        $gameRows+=@($added|Where-Object Category -eq 'Game'|ForEach-Object{[pscustomobject]@{RelativePath=$_.ManifestPath;Length=$_.Length;SHA256=$_.SHA256}})
+        $gameRows|Sort-Object RelativePath -Unique|Export-Csv -LiteralPath $gameManifest -NoTypeInformation -Encoding UTF8
+        $modsManifest=Join-Path $Config.ManifestPath 'mods.sha256.csv';$modRows=@();if(Test-Path -LiteralPath $modsManifest){$modRows=@(Import-Csv -LiteralPath $modsManifest)}
+        $modRows+=@($added|Where-Object Category -eq 'Mod'|ForEach-Object{[pscustomobject]@{RelativePath=$_.ManifestPath;Length=$_.Length;SHA256=$_.SHA256}})
+        $modRows|Sort-Object RelativePath -Unique|Export-Csv -LiteralPath $modsManifest -NoTypeInformation -Encoding UTF8
+        $mapFile=Join-Path $Config.FreezeRoot 'metadata\mod-copy-map.csv';$maps=@();if(Test-Path -LiteralPath $mapFile){$maps=@(Import-Csv -LiteralPath $mapFile)};$maps+=@($newMaps|ForEach-Object{$_})
+        $maps|Export-Csv -LiteralPath $mapFile -NoTypeInformation -Encoding UTF8
+        $inventoryFile=Join-Path $Config.FreezeRoot 'metadata\mod-inventory.csv';$inventory=@();if(Test-Path -LiteralPath $inventoryFile){$inventory=@(Import-Csv -LiteralPath $inventoryFile)};$inventory+=@($plan.MissingMods)
+        $inventory|Export-Csv -LiteralPath $inventoryFile -NoTypeInformation -Encoding UTF8
+        $Config.CopiedModRootCount=@($maps).Count;$Config.EffectiveModCount=@(Get-TargetModIds -ModsRoot (Join-Path $Config.CachePath 'mods') -GameVersion ([version]$Config.Version)).Count
+        Write-JsonFile $Config (Join-Path $Config.FreezeRoot 'metadata\freeze.json');Write-JsonFile $Config (Join-Path $ManagerRoot 'current-freeze.json')
+        $record=[ordered]@{SchemaVersion=1;Status='Completed';Time=(Get-Date).ToString('o');MigrationPath=(Join-Path $migrationDir 'migration.json');PreviousMigrationPath=$previous;TargetProfile=$Config.FreezeRoot;ComparisonMode=$plan.ComparisonMode;FullIntegrityChecked=$false;GameBuildCompatible=$plan.GameBuildCompatible;GameSizeMismatch=@($plan.GameSizeMismatch);ImportedModIds=@($plan.MissingMods.ModID);AddedFiles=@($added|ForEach-Object{$_});MetadataBackup=@($metadataBackup)}
+        Write-JsonFile $record $record.MigrationPath 15;Write-JsonFile ([ordered]@{MigrationPath=$record.MigrationPath}) $pointer
+        $report=Join-Path $Config.ReportPath ('migration_{0}.json' -f $stamp);Write-JsonFile $record $report 15
+        Write-ManagerLog "增量迁移完成：新增游戏文件 $(@($added|Where-Object Category -eq 'Game').Count) 个，新增 MOD $($plan.MissingMods.Count) 个。" 'PASS'
+        [pscustomobject]$record
+    }catch{
+        foreach($item in @($added|Sort-Object Path -Descending)){if(Test-Path -LiteralPath $item.Path -PathType Leaf){Remove-Item -LiteralPath (Assert-PathInsideProfile $item.Path $Config.FreezeRoot) -Force -ErrorAction SilentlyContinue}}
+        Restore-MigrationMetadata $metadataBackup $Config
+        throw
+    }
+}
+
+function Invoke-RollbackLatestMigration {
+    param($Config)
+    Assert-NoPZProcess
+    $pointer=Join-Path $Config.FreezeRoot 'migrations\last-migration.json'
+    if(-not(Test-Path -LiteralPath $pointer -PathType Leaf)){throw '没有可回迁的迁移记录。'}
+    $migrationPath=Assert-PathInsideProfile (Get-Content -LiteralPath $pointer -Raw|ConvertFrom-Json).MigrationPath $Config.FreezeRoot
+    if(-not(Test-Path -LiteralPath $migrationPath -PathType Leaf)){throw "迁移记录不存在：$migrationPath"}
+    $record=Get-Content -LiteralPath $migrationPath -Raw|ConvertFrom-Json
+    if($record.Status -ne 'Completed'){throw "最近迁移状态不是可回迁状态：$($record.Status)"}
+    $conflicts=@()
+    foreach($item in @($record.AddedFiles)){
+        $path=Assert-PathInsideProfile $item.Path $Config.FreezeRoot
+        if(Test-Path -LiteralPath $path -PathType Leaf){
+            $hash=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+            if($hash -ne $item.SHA256){$conflicts+=$path}
+        }
+    }
+    if($conflicts.Count -gt 0){throw ("回迁已停止：本次新增文件中有 $($conflicts.Count) 个后来被修改。首个冲突：$($conflicts[0])")}
+    foreach($item in @($record.AddedFiles|Sort-Object Path -Descending)){
+        $path=Assert-PathInsideProfile $item.Path $Config.FreezeRoot
+        if(Test-Path -LiteralPath $path -PathType Leaf){Remove-Item -LiteralPath $path -Force}
+    }
+    Restore-MigrationMetadata @($record.MetadataBackup) $Config
+    $record.Status='RolledBack';$record|Add-Member -NotePropertyName RollbackTime -NotePropertyValue (Get-Date).ToString('o') -Force
+    Write-JsonFile $record $migrationPath 15
+    if($record.PreviousMigrationPath){Write-JsonFile ([ordered]@{MigrationPath=$record.PreviousMigrationPath}) $pointer}else{Remove-Item -LiteralPath $pointer -Force}
+    Write-ManagerLog "最近一次增量迁移已回迁：$migrationPath" 'PASS'
+    $record
 }
 
 function Install-ManagerFiles {
@@ -587,6 +808,9 @@ switch ($Action) {
         $script:LogFile=Join-Path $logDir ('{0}_{1}.log' -f $Action.ToLowerInvariant(),(Get-TimeStamp))
         $config=Get-CurrentConfig $ManagerRoot
         switch($Action){
+            'PreviewMigration' {$plan=Get-MigrationPlan $config;Write-ManagerLog "快速迁移检查：缺失游戏文件 $($plan.GameMissing.Count)，大小不一致 $($plan.GameSizeMismatch.Count)，缺失 MOD $($plan.MissingMods.Count)。"; $plan|ConvertTo-Json -Depth 12}
+            'Migrate' {[void](Invoke-IncrementalMigration $config)}
+            'RollbackMigration' {[void](Invoke-RollbackLatestMigration $config)}
             'Verify' {[void](Invoke-Verify $config)}
             'Info' {$config|Format-List;Write-ManagerLog "冻结目录：$($config.FreezeRoot)"}
             'Launch' {[void](Invoke-Launch $config)}

@@ -73,17 +73,24 @@ if(-not(Test-Path -LiteralPath $script:Manager -PathType Leaf)){
     <GroupBox Grid.Row="2" Header="2. 创建与管理冻结版本">
       <Grid>
         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-        <StackPanel Orientation="Horizontal">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel Grid.Row="0" Orientation="Horizontal">
           <Button x:Name="CreateButton" Content="一键创建冻结版本" Background="#2F9E72" Foreground="White" FontWeight="SemiBold"/>
           <Button x:Name="PreflightButton" Content="只做预检"/>
           <Button x:Name="LaunchButton" Content="启动当前冻结版"/>
           <Button x:Name="VerifyButton" Content="完整校验"/>
           <Button x:Name="BackupButton" Content="备份存档"/>
         </StackPanel>
-        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+        <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
           <ComboBox x:Name="ProfilesBox" Width="260" Margin="4" DisplayMemberPath="Display"/>
           <Button x:Name="UseProfileButton" Content="设为当前"/>
           <Button x:Name="RefreshButton" Content="刷新"/>
+        </StackPanel>
+        <StackPanel Grid.Row="1" Grid.ColumnSpan="2" Orientation="Horizontal">
+          <Button x:Name="MigrationPreviewButton" Content="检查可迁移内容"/>
+          <Button x:Name="MigrateButton" Content="增量迁移到当前版本" Background="#D9892B" Foreground="White" FontWeight="SemiBold"/>
+          <Button x:Name="RollbackMigrationButton" Content="回迁最近一次"/>
+          <TextBlock Text="只补齐缺失文件与缺失 Mod ID；已有文件不覆盖" VerticalAlignment="Center" Foreground="#596773" Margin="12,0,0,0"/>
         </StackPanel>
       </Grid>
     </GroupBox>
@@ -112,7 +119,7 @@ $reader = New-Object System.Xml.XmlNodeReader $xaml
 $window = [Windows.Markup.XamlReader]::Load($reader)
 $names = @('StatusText','GamePathBox','WorkshopPathBox','CachePathBox','RootPathBox','DetectButton',
     'BrowseGameButton','BrowseWorkshopButton','BrowseCacheButton','CreateButton','PreflightButton','LaunchButton','VerifyButton',
-    'BackupButton','ProfilesBox','UseProfileButton','RefreshButton','LogBox','BusyBar','OpenButton','OpenDocsButton')
+    'BackupButton','MigrationPreviewButton','MigrateButton','RollbackMigrationButton','ProfilesBox','UseProfileButton','RefreshButton','LogBox','BusyBar','OpenButton','OpenDocsButton')
 foreach($name in $names){Set-Variable -Name $name -Value $window.FindName($name) -Scope Script}
 $RootPathBox.Text = $script:AppRoot
 
@@ -126,7 +133,7 @@ function Set-Busy([bool]$Busy,[string]$Text){
     $BusyBar.IsIndeterminate=$Busy
     $BusyBar.Visibility=if($Busy){'Visible'}else{'Hidden'}
     $StatusText.Text=$Text
-    foreach($control in @($DetectButton,$CreateButton,$PreflightButton,$LaunchButton,$VerifyButton,$BackupButton,$UseProfileButton,$RefreshButton)){
+    foreach($control in @($DetectButton,$CreateButton,$PreflightButton,$LaunchButton,$VerifyButton,$BackupButton,$MigrationPreviewButton,$MigrateButton,$RollbackMigrationButton,$UseProfileButton,$RefreshButton)){
         $control.IsEnabled=-not $Busy
     }
 }
@@ -194,23 +201,34 @@ function Start-ManagerAction([string]$Action){
         [System.Windows.MessageBox]::Show('还没有当前冻结版本，请先创建或选择一个版本。','PZ Freezer','OK','Information')|Out-Null
         return
     }
-    if($Action -eq 'Create'){
+    if($Action -in @('Create','Preflight','PreviewMigration','Migrate')){
         foreach($pair in @(@('游戏本体',$GamePathBox.Text),@('Workshop',$WorkshopPathBox.Text),@('缓存/存档',$CachePathBox.Text))){
             if(-not(Test-Path -LiteralPath $pair[1] -PathType Container)){
                 [System.Windows.MessageBox]::Show("$($pair[0])目录无效：$($pair[1])",'PZ Freezer','OK','Error')|Out-Null;return
             }
         }
+    }
+    if($Action -eq 'Create'){
         $answer=[System.Windows.MessageBox]::Show("将创建完整独立副本并计算 SHA-256。`n`n请先退出游戏；操作可能持续较长时间，并需要足够磁盘空间。`n不会修改 Steam 原版。`n`n是否继续？",'创建冻结版本','YesNo','Question')
         if($answer -ne 'Yes'){return}
     }
-    $busyText=switch($Action){'Create'{'正在创建'}'Preflight'{'正在预检'}'Verify'{'正在校验'}'BackupSave'{'正在备份'}'Launch'{'正在启动'}default{'正在执行'}}
+    if($Action -eq 'Migrate'){
+        $answer=[System.Windows.MessageBox]::Show("当前目标通常已经包含游戏本体和 MOD。`n`n继续后只会补齐缺失文件和缺失 Mod ID，不覆盖已有文件；不会执行全量完整性哈希。工具会先备份存档并保存迁移事务，可用「回迁最近一次」撤回。`n`n确认继续？",'确认增量迁移','YesNo','Warning')
+        if($answer -ne 'Yes'){return}
+    }
+    if($Action -eq 'RollbackMigration'){
+        $answer=[System.Windows.MessageBox]::Show("将撤回最近一次增量迁移。若本次新增文件后来发生过修改，回迁会自动停止，不会强制删除。`n`n确认继续？",'确认回迁','YesNo','Warning')
+        if($answer -ne 'Yes'){return}
+    }
+    $busyText=switch($Action){'Create'{'正在创建'}'Preflight'{'正在预检'}'PreviewMigration'{'正在检查迁移'}'Migrate'{'正在迁移'}'RollbackMigration'{'正在回迁'}'Verify'{'正在校验'}'BackupSave'{'正在备份'}'Launch'{'正在启动'}default{'正在执行'}}
     Set-Busy $true $busyText
     Add-Log ("[{0}] 开始执行：{1}" -f (Get-Date -Format 'HH:mm:ss'),$Action)
     $manager=$script:Manager;$root=$script:AppRoot;$game=$GamePathBox.Text;$workshop=$WorkshopPathBox.Text;$cache=$CachePathBox.Text
     $script:Job=Start-Job -ScriptBlock {
         param($Manager,$ActionName,$Root,$Game,$Workshop,$Cache)
         $args=@('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',$Manager,'-Action',$ActionName,'-ManagerRoot',$Root)
-        if($ActionName -in @('Create','Preflight')){$args+=@('-SourceGame',$Game,'-SourceWorkshop',$Workshop,'-SourceCache',$Cache)}
+        if($ActionName -in @('Create','Preflight','PreviewMigration','Migrate')){$args+=@('-SourceGame',$Game,'-SourceWorkshop',$Workshop,'-SourceCache',$Cache)}
+        if($ActionName -eq 'Migrate'){$args+='-ConfirmedExistingTarget'}
         & powershell.exe @args 2>&1|ForEach-Object{$_.ToString()}
         if($LASTEXITCODE -ne 0){throw "核心进程退出码：$LASTEXITCODE"}
     } -ArgumentList $manager,$Action,$root,$game,$workshop,$cache
@@ -240,6 +258,9 @@ $BrowseWorkshopButton.Add_Click({Select-Folder $WorkshopPathBox '选择 Steam Wo
 $BrowseCacheButton.Add_Click({Select-Folder $CachePathBox '选择 Zomboid 缓存/存档目录'})
 $CreateButton.Add_Click({Start-ManagerAction 'Create'})
 $PreflightButton.Add_Click({Start-ManagerAction 'Preflight'})
+$MigrationPreviewButton.Add_Click({Start-ManagerAction 'PreviewMigration'})
+$MigrateButton.Add_Click({Start-ManagerAction 'Migrate'})
+$RollbackMigrationButton.Add_Click({Start-ManagerAction 'RollbackMigration'})
 $LaunchButton.Add_Click({Start-ManagerAction 'Launch'})
 $VerifyButton.Add_Click({Start-ManagerAction 'Verify'})
 $BackupButton.Add_Click({Start-ManagerAction 'BackupSave'})
