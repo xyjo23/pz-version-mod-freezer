@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.2-preview - 2026-11-08
+
+- Reworked the interface into a compact dark launcher layout with top navigation.
+- Promoted the selected version to a launch-focused main panel with a large primary action.
+- Restyled the version list as dark selectable cards and kept Add Version in the upper-right.
+- Restyled the migration workflow as a separate scrollable tool page.
+- Moved directory/help shortcuts into the top navigation and condensed shared task status at the bottom.
+- Credited PvzLauncher as a UI information-architecture reference; no upstream code or assets are included.
+
 ## 0.5.1-preview - 2026-11-08
 
 - Split the interface into a primary Version tab and a secondary Migration & Freeze Tool tab.

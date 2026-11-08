@@ -25,3 +25,14 @@ Upstream license: https://github.com/PZ-Wiki-Modding/PZ-Backup/blob/main/LICENSE
 Upstream license: https://github.com/mysteriousdev777/steam-update-freezer/blob/prod/LICENSE
 
 PZ Version & Mod Freezer does **not** use the manifest-locking or manifest-rewriting technique of Steam Update Freezer. It creates independent file copies outside Steam-managed directories.
+
+## PvzLauncher
+
+- Project: PvzLauncher/PvzLauncher
+- Source: https://github.com/PvzLauncher/PvzLauncher
+- License: GPL-3.0
+- How it influenced this project: top navigation, a launch-focused main view, separation of launch and management responsibilities, and a prominent local-import entry.
+- Code copied: none
+- Assets copied: none
+
+The dark theme, layout measurements, controls and implementation in PZ Version & Mod Freezer were created independently for this project.

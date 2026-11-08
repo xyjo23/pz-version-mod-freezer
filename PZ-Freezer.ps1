@@ -18,110 +18,79 @@ if(-not(Test-Path -LiteralPath $script:Manager -PathType Leaf)){
 [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="PZ Version &amp; Mod Freezer" Width="1080" Height="980"
-        MinWidth="940" MinHeight="850" WindowStartupLocation="CenterScreen"
-        Background="#111820" FontFamily="Microsoft YaHei UI">
+        Title="PZ Version &amp; Mod Freezer" Width="1120" Height="800"
+        MinWidth="980" MinHeight="700" WindowStartupLocation="CenterScreen"
+        Background="#24272C" FontFamily="Microsoft YaHei UI">
   <Window.Resources>
+    <Style TargetType="TextBlock"><Setter Property="Foreground" Value="#F3F5F7"/></Style>
     <Style TargetType="Button">
-      <Setter Property="Padding" Value="14,7"/><Setter Property="Margin" Value="4"/>
-      <Setter Property="MinHeight" Value="34"/><Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Padding" Value="14,8"/><Setter Property="Margin" Value="4"/><Setter Property="MinHeight" Value="36"/><Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Foreground" Value="#F5F7F9"/><Setter Property="Background" Value="#3A3E44"/><Setter Property="BorderBrush" Value="#50555C"/><Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button"><Border x:Name="ButtonBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="4" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ButtonBorder" Property="Background" Value="#4A4F56"/></Trigger><Trigger Property="IsPressed" Value="True"><Setter TargetName="ButtonBorder" Property="Opacity" Value="0.78"/></Trigger><Trigger Property="IsEnabled" Value="False"><Setter TargetName="ButtonBorder" Property="Opacity" Value="0.42"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
     </Style>
+    <Style x:Key="AccentButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Setter Property="Background" Value="#8FE7EE"/><Setter Property="Foreground" Value="#142126"/><Setter Property="BorderBrush" Value="#8FE7EE"/><Setter Property="FontWeight" Value="SemiBold"/></Style>
+    <Style x:Key="QuietButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Setter Property="Background" Value="Transparent"/><Setter Property="BorderBrush" Value="Transparent"/><Setter Property="Foreground" Value="#DCE2E7"/></Style>
     <Style TargetType="TextBox">
-      <Setter Property="Padding" Value="8,6"/><Setter Property="Margin" Value="4"/><Setter Property="Background" Value="#F7FFFFFF"/>
+      <Setter Property="Padding" Value="9,7"/><Setter Property="Margin" Value="4"/><Setter Property="Background" Value="#202329"/><Setter Property="Foreground" Value="#F2F4F6"/><Setter Property="BorderBrush" Value="#484D54"/><Setter Property="CaretBrush" Value="White"/>
     </Style>
     <Style TargetType="ComboBox">
-      <Setter Property="Padding" Value="8,5"/><Setter Property="Margin" Value="4"/><Setter Property="MinHeight" Value="34"/>
+      <Setter Property="Padding" Value="8,5"/><Setter Property="Margin" Value="4"/><Setter Property="MinHeight" Value="36"/><Setter Property="Background" Value="#2D3137"/><Setter Property="Foreground" Value="#F2F4F6"/>
     </Style>
+    <Style TargetType="ComboBoxItem"><Setter Property="Background" Value="#2D3137"/><Setter Property="Foreground" Value="#F2F4F6"/><Setter Property="Padding" Value="8,6"/></Style>
     <Style TargetType="TabItem">
-      <Setter Property="Padding" Value="26,10"/><Setter Property="FontSize" Value="15"/><Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Foreground" Value="#D7DCE1"/><Setter Property="FontSize" Value="15"/><Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="TabItem"><Border x:Name="NavItem" Background="Transparent" Padding="20,0" Height="56"><Grid><ContentPresenter ContentSource="Header" VerticalAlignment="Center"/><Border x:Name="AccentLine" Height="3" Background="#8FE7EE" CornerRadius="2" VerticalAlignment="Bottom" Visibility="Collapsed"/></Grid></Border><ControlTemplate.Triggers><Trigger Property="IsSelected" Value="True"><Setter TargetName="AccentLine" Property="Visibility" Value="Visible"/><Setter Property="Foreground" Value="White"/></Trigger><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="NavItem" Property="Background" Value="#171A1E"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <Style TargetType="TabControl">
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="TabControl"><Grid KeyboardNavigation.TabNavigation="Local"><Grid.RowDefinitions><RowDefinition Height="56"/><RowDefinition Height="*"/></Grid.RowDefinitions><Border Background="#0C0E11"><TabPanel IsItemsHost="True" Margin="14,0,260,0"/></Border><Border Grid.Row="1" Background="#292C31"><ContentPresenter ContentSource="SelectedContent"/></Border></Grid></ControlTemplate></Setter.Value></Setter>
     </Style>
     <Style TargetType="ListBox">
-      <Setter Property="Padding" Value="6"/><Setter Property="BorderThickness" Value="0"/><Setter Property="Background" Value="#F8FAFC"/>
+      <Setter Property="Padding" Value="6"/><Setter Property="BorderThickness" Value="0"/><Setter Property="Background" Value="Transparent"/>
     </Style>
     <Style TargetType="ListBoxItem">
-      <Setter Property="Padding" Value="12,10"/><Setter Property="Margin" Value="2"/><Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+      <Setter Property="Padding" Value="12,11"/><Setter Property="Margin" Value="2,3"/><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Foreground" Value="#EEF2F5"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListBoxItem"><Border x:Name="ItemBorder" Background="#34383E" BorderBrush="#43484F" BorderThickness="1" CornerRadius="5" Padding="{TemplateBinding Padding}"><ContentPresenter/></Border><ControlTemplate.Triggers><Trigger Property="IsSelected" Value="True"><Setter TargetName="ItemBorder" Property="Background" Value="#33464C"/><Setter TargetName="ItemBorder" Property="BorderBrush" Value="#8FE7EE"/></Trigger><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ItemBorder" Property="Background" Value="#3D4249"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
     </Style>
     <Style TargetType="GroupBox">
-      <Setter Property="Margin" Value="8,5"/><Setter Property="Padding" Value="10"/><Setter Property="Background" Value="#E8F4F6F8"/>
-      <Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Foreground" Value="#16222D"/>
+      <Setter Property="Margin" Value="8,6"/><Setter Property="Padding" Value="12"/><Setter Property="Background" Value="#30343A"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Foreground" Value="#F0F3F5"/>
       <Setter Property="Template">
-        <Setter.Value>
-          <ControlTemplate TargetType="GroupBox">
-            <Grid>
-              <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-              <Border Grid.Row="1" Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}"><ContentPresenter Content="{TemplateBinding Content}"/></Border>
-              <Border Grid.Row="0" Background="#F2F4F6F8" CornerRadius="5,5,0,0" Padding="10,4" Margin="12,0,0,-1" HorizontalAlignment="Left"><ContentPresenter Content="{TemplateBinding Header}"/></Border>
-            </Grid>
-          </ControlTemplate>
-        </Setter.Value>
+        <Setter.Value><ControlTemplate TargetType="GroupBox"><Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions><ContentPresenter ContentSource="Header" Margin="10,0,0,5"/><Border Grid.Row="1" Background="{TemplateBinding Background}" BorderBrush="#444950" BorderThickness="1" CornerRadius="6" Padding="{TemplateBinding Padding}"><ContentPresenter Content="{TemplateBinding Content}"/></Border></Grid></ControlTemplate></Setter.Value>
       </Setter>
     </Style>
   </Window.Resources>
-  <Grid Background="#EEF1F4" Margin="0">
-    <Grid Margin="14">
-      <Grid.RowDefinitions>
-        <RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="230"/><RowDefinition Height="Auto"/>
-      </Grid.RowDefinitions>
-
-      <Border Grid.Row="0" Background="#E5222F3B" CornerRadius="8" Padding="18" Margin="8,4,8,8">
-        <Grid>
-          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-          <StackPanel>
-            <TextBlock Text="PZ Version &amp; Mod Freezer" Foreground="White" FontSize="24" FontWeight="SemiBold"/>
-            <TextBlock Text="管理并启动独立版本；需要时再进入迁移冻结工具" Foreground="#D7E2EC" Margin="0,6,0,0"/>
-          </StackPanel>
-          <Border Grid.Column="1" Background="#2F9E72" CornerRadius="14" Padding="12,5" VerticalAlignment="Center">
-            <TextBlock x:Name="StatusText" Text="准备就绪" Foreground="White" FontWeight="SemiBold"/>
-          </Border>
-        </Grid>
-      </Border>
-
-      <TabControl Grid.Row="1" x:Name="MainTabs" SelectedIndex="0" Margin="8,0,8,6">
-        <TabItem Header="版本">
-          <Grid Margin="12">
-            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-            <Grid Grid.Row="0" Margin="4,2,4,12">
-              <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-              <StackPanel>
-                <TextBlock Text="我的冻结版本" FontSize="21" FontWeight="SemiBold" Foreground="#172532"/>
-                <TextBlock x:Name="LibrarySummaryText" Text="正在扫描版本库……" Foreground="#536675" Margin="0,5,0,0"/>
-              </StackPanel>
-              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                <Button x:Name="RefreshButton" Content="刷新"/>
-                <Button x:Name="AddLibraryRootButton" Content="＋ 添加版本" Background="#2F6FA3" Foreground="White" FontWeight="SemiBold"/>
-              </StackPanel>
-            </Grid>
-            <Grid Grid.Row="1">
-              <Grid.ColumnDefinitions><ColumnDefinition Width="370"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-              <Border Grid.Column="0" Background="#F8FAFC" BorderBrush="#D9E1E8" BorderThickness="1" CornerRadius="7" Padding="6">
-                <Grid>
-                  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                  <TextBlock Text="版本列表" FontWeight="SemiBold" Foreground="#34495A" Margin="10,8,10,6"/>
-                  <ListBox Grid.Row="1" x:Name="ProfilesBox" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                    <ListBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding Display}" TextWrapping="Wrap"/></DataTemplate></ListBox.ItemTemplate>
-                  </ListBox>
-                </Grid>
-              </Border>
-              <Border Grid.Column="2" Background="White" BorderBrush="#D9E1E8" BorderThickness="1" CornerRadius="7" Padding="22">
-                <Grid>
-                  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                  <TextBlock Text="版本详情" FontSize="19" FontWeight="SemiBold" Foreground="#172532"/>
-                  <TextBlock Grid.Row="1" x:Name="ProfileDetailsText" Text="尚未发现冻结版本。请点击右上角“添加版本”。" TextWrapping="Wrap" Foreground="#405565" FontSize="14" LineHeight="25" Margin="0,16,0,12"/>
-                  <Border Grid.Row="2" Background="#EEF5FA" CornerRadius="5" Padding="12" Margin="0,0,0,12">
-                    <TextBlock Text="每个版本保持独立的游戏文件、MOD 与 cache。启动所选版本不会切换 Steam 当前安装。" TextWrapping="Wrap" Foreground="#466071"/>
-                  </Border>
-                  <WrapPanel Grid.Row="3" HorizontalAlignment="Right">
-                    <Button x:Name="OpenSelectedProfileButton" Content="打开目录"/><Button x:Name="VerifyButton" Content="校验版本"/><Button x:Name="UseProfileButton" Content="设为当前"/><Button x:Name="LaunchButton" Content="启动版本" Background="#2F9E72" Foreground="White" FontWeight="SemiBold"/>
-                  </WrapPanel>
-                </Grid>
-              </Border>
-            </Grid>
+  <Grid>
+    <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="178"/><RowDefinition Height="4"/></Grid.RowDefinitions>
+    <TabControl Grid.Row="0" x:Name="MainTabs" SelectedIndex="0">
+      <TabItem Header="▶  版本">
+        <Grid Margin="24,20,24,18">
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+          <Grid Grid.Row="0" Margin="4,0,4,15">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel><TextBlock Text="版本库" FontSize="22" FontWeight="SemiBold"/><TextBlock x:Name="LibrarySummaryText" Text="正在扫描版本库……" Foreground="#AAB3BB" Margin="0,5,0,0"/></StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"><Button x:Name="RefreshButton" Content="刷新"/><Button x:Name="AddLibraryRootButton" Content="＋ 添加版本" Style="{StaticResource AccentButtonStyle}"/></StackPanel>
           </Grid>
-        </TabItem>
+          <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="330"/><ColumnDefinition Width="14"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <Border Grid.Column="0" Background="#202328" BorderBrush="#41464D" BorderThickness="1" CornerRadius="7" Padding="8">
+              <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions><TextBlock Text="已添加的版本" FontWeight="SemiBold" Foreground="#C7CFD6" Margin="10,8,10,7"/><ListBox Grid.Row="1" x:Name="ProfilesBox" ScrollViewer.HorizontalScrollBarVisibility="Disabled"><ListBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding Display}" Foreground="#F2F5F7" TextWrapping="Wrap"/></DataTemplate></ListBox.ItemTemplate></ListBox></Grid>
+            </Border>
+            <Border Grid.Column="2" Background="#34373C" BorderBrush="#484D54" BorderThickness="1" CornerRadius="7" Padding="28">
+              <Grid>
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                <StackPanel HorizontalAlignment="Center"><TextBlock Text="PROJECT ZOMBOID" FontSize="13" FontWeight="SemiBold" Foreground="#8FE7EE" HorizontalAlignment="Center"/><TextBlock x:Name="SelectedVersionTitleText" Text="选择一个版本" FontSize="30" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,7,0,0"/></StackPanel>
+                <TextBlock Grid.Row="1" x:Name="ProfileDetailsText" Text="从左侧选择版本，或使用右上角“添加版本”。" TextWrapping="Wrap" TextAlignment="Center" Foreground="#C0C8CF" FontSize="14" LineHeight="24" Margin="10,20,10,10"/>
+                <Border Grid.Row="2" Background="#292C31" BorderBrush="#42474E" BorderThickness="1" CornerRadius="5" Padding="13" Margin="0,10,0,14" VerticalAlignment="Bottom"><TextBlock Text="版本之间保持独立的游戏文件、MOD 与 cache。当前页面只管理和启动版本，不会修改 Steam 安装。" TextWrapping="Wrap" Foreground="#AEB8C0"/></Border>
+                <Grid Grid.Row="3"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="260"/></Grid.ColumnDefinitions><WrapPanel VerticalAlignment="Bottom"><Button x:Name="OpenSelectedProfileButton" Content="打开目录"/><Button x:Name="VerifyButton" Content="校验"/><Button x:Name="UseProfileButton" Content="设为当前"/></WrapPanel><Button Grid.Column="1" x:Name="LaunchButton" Height="62" Content="启动所选版本" Style="{StaticResource AccentButtonStyle}" FontSize="16"/></Grid>
+              </Grid>
+            </Border>
+          </Grid>
+        </Grid>
+      </TabItem>
 
-        <TabItem Header="迁移冻结工具">
-          <ScrollViewer VerticalScrollBarVisibility="Auto">
-            <StackPanel Margin="8">
+      <TabItem Header="⇄  迁移冻结">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <StackPanel Margin="18,16">
+              <StackPanel Margin="10,0,10,8"><TextBlock Text="迁移冻结工具" FontSize="22" FontWeight="SemiBold"/><TextBlock Text="从 Steam 来源创建冻结版本，或向已有版本补充游戏文件与 MOD。" Foreground="#AAB3BB" Margin="0,5,0,0"/><TextBlock Text="首次打开时从本机 Steam 配置自动检测来源；程序包不预置个人目录。" Foreground="#79858F" Margin="0,3,0,0"/></StackPanel>
               <GroupBox Header="1. Steam / Project Zomboid 来源">
                 <Grid>
                   <Grid.ColumnDefinitions><ColumnDefinition Width="120"/><ColumnDefinition Width="*"/><ColumnDefinition Width="86"/></Grid.ColumnDefinitions>
@@ -129,16 +98,16 @@ if(-not(Test-Path -LiteralPath $script:Manager -PathType Leaf)){
                   <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="游戏本体"/><TextBox Grid.Row="0" Grid.Column="1" x:Name="GamePathBox"/><Button Grid.Row="0" Grid.Column="2" x:Name="BrowseGameButton" Content="选择"/>
                   <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="Workshop"/><TextBox Grid.Row="1" Grid.Column="1" x:Name="WorkshopPathBox"/><Button Grid.Row="1" Grid.Column="2" x:Name="BrowseWorkshopButton" Content="选择"/>
                   <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="缓存/存档"/><TextBox Grid.Row="2" Grid.Column="1" x:Name="CachePathBox"/><Button Grid.Row="2" Grid.Column="2" x:Name="BrowseCacheButton" Content="选择"/>
-                  <TextBlock Grid.Row="3" VerticalAlignment="Center" Text="工具目录"/><TextBox Grid.Row="3" Grid.Column="1" x:Name="RootPathBox" IsReadOnly="True" Background="#EEF1F4"/><Button Grid.Row="3" Grid.Column="2" x:Name="DetectButton" Content="自动检测"/>
+                  <TextBlock Grid.Row="3" VerticalAlignment="Center" Text="工具目录"/><TextBox Grid.Row="3" Grid.Column="1" x:Name="RootPathBox" IsReadOnly="True"/><Button Grid.Row="3" Grid.Column="2" x:Name="DetectButton" Content="自动检测"/>
                 </Grid>
               </GroupBox>
               <GroupBox Header="2. 迁移目标">
                 <Grid>
                   <Grid.ColumnDefinitions><ColumnDefinition Width="120"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                  <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="冻结位置"/><TextBox Grid.Row="0" Grid.Column="1" x:Name="TargetProfileBox" IsReadOnly="True" Background="#EEF1F4"/>
-                  <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal"><Button x:Name="BrowseTargetProfileButton" Content="选择位置"/><Button x:Name="InspectTargetButton" Content="检测目标" Background="#2F6FA3" Foreground="White"/></StackPanel>
-                  <TextBlock Grid.Row="1" Grid.Column="1" x:Name="MigrationDecisionText" Text="迁移方式：请先检测目标；已有冻结版时增量迁移，空目录时完整迁移。" TextWrapping="Wrap" Foreground="#405565" Margin="8,4"/>
+                  <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="冻结位置"/><TextBox Grid.Row="0" Grid.Column="1" x:Name="TargetProfileBox" IsReadOnly="True"/>
+                  <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal"><Button x:Name="BrowseTargetProfileButton" Content="选择位置"/><Button x:Name="InspectTargetButton" Content="检测目标" Style="{StaticResource AccentButtonStyle}"/></StackPanel>
+                  <TextBlock Grid.Row="1" Grid.Column="1" x:Name="MigrationDecisionText" Text="迁移方式：请先检测目标；已有冻结版时增量迁移，空目录时完整迁移。" TextWrapping="Wrap" Foreground="#AEB8C0" Margin="8,4"/>
                 </Grid>
               </GroupBox>
               <GroupBox Header="3. 执行操作">
@@ -150,35 +119,31 @@ if(-not(Test-Path -LiteralPath $script:Manager -PathType Leaf)){
                   </DockPanel>
                   <Grid Grid.Row="1">
                     <StackPanel x:Name="MigrationModePanel">
-                      <StackPanel Orientation="Horizontal"><Button x:Name="MigrationPreviewButton" Content="检查迁移内容"/><Button x:Name="MigrateButton" Content="开始自动迁移" Background="#2F9E72" Foreground="White" FontWeight="SemiBold"/><Button x:Name="RollbackMigrationButton" Content="回迁最近一次"/></StackPanel>
-                      <TextBlock Text="已有有效冻结文件时只补齐缺失内容；空目录时自动创建完整冻结版本。" Foreground="#4F5F6B" Margin="8,3"/>
+                      <StackPanel Orientation="Horizontal"><Button x:Name="MigrationPreviewButton" Content="检查迁移内容"/><Button x:Name="MigrateButton" Content="开始自动迁移" Style="{StaticResource AccentButtonStyle}"/><Button x:Name="RollbackMigrationButton" Content="回迁最近一次"/></StackPanel>
+                      <TextBlock Text="已有有效冻结文件时只补齐缺失内容；空目录时自动创建完整冻结版本。" Foreground="#AEB8C0" Margin="8,3"/>
                     </StackPanel>
                     <Grid x:Name="BackupModePanel" Visibility="Collapsed">
                       <Grid.ColumnDefinitions><ColumnDefinition Width="120"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                       <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                       <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="选择存档"/><ComboBox Grid.Row="0" Grid.Column="1" x:Name="SaveProfileBox" DisplayMemberPath="Display"/><Button Grid.Row="0" Grid.Column="2" x:Name="RefreshSavesButton" Content="刷新存档"/>
                       <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="外部备份位置"/><TextBox Grid.Row="1" Grid.Column="1" x:Name="BackupDestinationBox"/><Button Grid.Row="1" Grid.Column="2" x:Name="BrowseBackupDestinationButton" Content="选择位置"/>
-                      <TextBlock Grid.Row="2" Grid.ColumnSpan="2" Text="备份所选存档内部的全部世界/角色文件；不包含其它存档、日志、录像、全局设置和 MOD 资源。" TextWrapping="Wrap" Foreground="#4F5F6B" Margin="8,5"/>
-                      <Button Grid.Row="2" Grid.Column="2" x:Name="BackupButton" Content="开始备份所选存档" Background="#2F6FA3" Foreground="White" FontWeight="SemiBold"/>
+                      <TextBlock Grid.Row="2" Grid.ColumnSpan="2" Text="备份所选存档内部的全部世界/角色文件；不包含其它存档、日志、录像、全局设置和 MOD 资源。" TextWrapping="Wrap" Foreground="#AEB8C0" Margin="8,5"/>
+                      <Button Grid.Row="2" Grid.Column="2" x:Name="BackupButton" Content="开始备份所选存档" Style="{StaticResource AccentButtonStyle}"/>
                     </Grid>
                   </Grid>
                 </Grid>
               </GroupBox>
-            </StackPanel>
-          </ScrollViewer>
-        </TabItem>
-      </TabControl>
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+    </TabControl>
 
-      <GroupBox Grid.Row="2" Header="运行状态" MinHeight="210">
-        <Grid>
-          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-          <Border Grid.Row="0" Background="#EAF2F8" CornerRadius="6" Padding="12,9" Margin="4,2,4,8"><StackPanel><TextBlock x:Name="StepText" Text="当前：等待操作" FontWeight="SemiBold" Foreground="#243447" FontSize="14"/><TextBlock x:Name="NextStepText" Text="下一步：选择要执行的操作" Foreground="#596773" Margin="0,4,0,0"/></StackPanel></Border>
-          <TextBox Grid.Row="1" x:Name="LogBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" FontFamily="Microsoft YaHei UI" FontSize="13" Background="#E6111820" Foreground="#D8E3EA"/>
-        </Grid>
-      </GroupBox>
+    <StackPanel Grid.Row="0" HorizontalAlignment="Right" VerticalAlignment="Top" Orientation="Horizontal" Height="56" Margin="0,0,12,0"><Button x:Name="OpenButton" Content="工具目录" Style="{StaticResource QuietButtonStyle}"/><Button x:Name="OpenDocsButton" Content="使用说明" Style="{StaticResource QuietButtonStyle}"/></StackPanel>
 
-      <Grid Grid.Row="3" Margin="8,2"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><ProgressBar x:Name="BusyBar" Height="7" IsIndeterminate="False" Visibility="Hidden"/><StackPanel Grid.Column="1" Orientation="Horizontal"><Button x:Name="OpenButton" Content="打开工具目录"/><Button x:Name="OpenDocsButton" Content="应用内说明"/></StackPanel></Grid>
-    </Grid>
+    <Border Grid.Row="1" Background="#171A1E" BorderBrush="#3B4047" BorderThickness="0,1,0,0" Padding="18,10">
+      <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions><Grid Grid.Row="0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel Orientation="Horizontal"><TextBlock Text="运行状态" FontWeight="SemiBold" Margin="0,0,18,0"/><TextBlock x:Name="StepText" Text="当前：等待操作" Foreground="#C7D0D7"/><TextBlock x:Name="NextStepText" Text="下一步：选择要执行的操作" Foreground="#89949D" Margin="20,0,0,0"/></StackPanel><Border Grid.Column="1" Background="#35444A" CornerRadius="11" Padding="10,3"><TextBlock x:Name="StatusText" Text="准备就绪" Foreground="#8FE7EE" FontWeight="SemiBold"/></Border></Grid><TextBox Grid.Row="1" x:Name="LogBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" FontFamily="Microsoft YaHei UI" FontSize="12" Background="#101215" Foreground="#C9D1D8" BorderBrush="#343940" Margin="0,8,0,0"/></Grid>
+    </Border>
+    <ProgressBar Grid.Row="2" x:Name="BusyBar" IsIndeterminate="False" Visibility="Hidden" Foreground="#8FE7EE" Background="#25292E"/>
   </Grid>
 </Window>
 '@
@@ -186,7 +151,7 @@ if(-not(Test-Path -LiteralPath $script:Manager -PathType Leaf)){
 $reader = New-Object System.Xml.XmlNodeReader $xaml
 $window = [Windows.Markup.XamlReader]::Load($reader)
 $names = @('StatusText','MainTabs','GamePathBox','WorkshopPathBox','CachePathBox','RootPathBox','DetectButton',
-    'BrowseGameButton','BrowseWorkshopButton','BrowseCacheButton','LaunchButton','VerifyButton','OpenSelectedProfileButton','AddLibraryRootButton','ProfileDetailsText','LibrarySummaryText',
+    'BrowseGameButton','BrowseWorkshopButton','BrowseCacheButton','LaunchButton','VerifyButton','OpenSelectedProfileButton','AddLibraryRootButton','SelectedVersionTitleText','ProfileDetailsText','LibrarySummaryText',
     'OperationModeBox','MigrationModePanel','MigrationDecisionText','BackupModePanel','SaveProfileBox','RefreshSavesButton','BackupDestinationBox','BrowseBackupDestinationButton',
     'BackupButton','MigrationPreviewButton','MigrateButton','RollbackMigrationButton','BrowseTargetProfileButton','InspectTargetButton','TargetProfileBox','ProfilesBox','UseProfileButton','RefreshButton','StepText','NextStepText','LogBox','BusyBar','OpenButton','OpenDocsButton')
 foreach($name in $names){Set-Variable -Name $name -Value $window.FindName($name) -Scope Script}
@@ -484,10 +449,11 @@ function Read-VersionConfigForLibrary([string]$ConfigPath){
 
 function Update-SelectedProfileDetails {
     $item=$ProfilesBox.SelectedItem
-    if(-not $item){$ProfileDetailsText.Text='尚未发现冻结版本。';return}
+    if(-not $item){$SelectedVersionTitleText.Text='选择一个版本';$ProfileDetailsText.Text='尚未发现冻结版本。请使用右上角“添加版本”。';return}
     $created=if($item.Created -and $item.Created -ne [datetime]::MinValue){$item.Created.ToString('yyyy-MM-dd HH:mm')}else{'未知'}
     $problem=if($item.Healthy){'无'}else{($item.Issues -join '；')}
-    $ProfileDetailsText.Text=("版本 B{0}    BuildID {1}    MOD {2}    状态：{3}`n创建：{4}    问题：{5}`n位置：{6}" -f $item.Version,$item.BuildID,$item.ModCount,$item.Health,$created,$problem,$item.FreezeRoot)
+    $SelectedVersionTitleText.Text=("Build {0}" -f $item.Version)
+    $ProfileDetailsText.Text=("Steam BuildID {0}   ·   {1} MOD   ·   状态：{2}`n创建：{3}   ·   问题：{4}`n{5}" -f $item.BuildID,$item.ModCount,$item.Health,$created,$problem,$item.FreezeRoot)
 }
 
 function Refresh-Profiles {
@@ -677,7 +643,7 @@ $window.Add_Closing({param($sender,$e)
 Refresh-Profiles
 Update-OperationMode
 if($SelfTest){
-    if(-not $window -or -not $MainTabs -or $MainTabs.Items.Count -ne 2 -or -not $MigrateButton -or -not $LogBox -or -not $ProfilesBox -or -not $ProfileDetailsText -or -not $OperationModeBox -or -not $BackupModePanel){throw 'GUI 控件初始化失败。'}
+    if(-not $window -or -not $MainTabs -or $MainTabs.Items.Count -ne 2 -or -not $MigrateButton -or -not $LogBox -or -not $ProfilesBox -or -not $SelectedVersionTitleText -or -not $ProfileDetailsText -or -not $OperationModeBox -or -not $BackupModePanel){throw 'GUI 控件初始化失败。'}
     "TAB_LAYOUT_PASS=$($MainTabs.Items.Count)"
     if($SelfTestExpectedProfileCount -ge 0){if($ProfilesBox.Items.Count -ne $SelfTestExpectedProfileCount){throw "Expected $SelfTestExpectedProfileCount profiles but found $($ProfilesBox.Items.Count)."};"LIBRARY_COUNT_PASS=$($ProfilesBox.Items.Count)"}
     if($SelfTestSelectFirstProfile){$testIndex=0;for($i=0;$i-lt$ProfilesBox.Items.Count;$i++){if($ProfilesBox.Items[$i].Healthy){$testIndex=$i;break}};$ProfilesBox.SelectedIndex=$testIndex;$expectedRoot=$ProfilesBox.SelectedItem.FreezeRoot;if(-not(Use-SelectedProfile)){throw 'Library selection self-test failed.'};$selectedConfig=Get-Content -LiteralPath (Join-Path $script:AppRoot 'current-freeze.json') -Raw|ConvertFrom-Json;if($selectedConfig.FreezeRoot -ine $expectedRoot){throw 'Selected profile was not written as current.'};"LIBRARY_SELECTION_PASS=$expectedRoot"}
@@ -696,8 +662,8 @@ if($SelfTest){
     if($SelfTestScreenshotPath){
         $MainTabs.SelectedIndex=if($SelfTestTab -eq 'Migration'){1}else{0}
         $OperationModeBox.SelectedIndex=@{Migration=0;Backup=1}[$SelfTestMode];Update-OperationMode
-        $window.Width=1080;$window.Height=980;$window.Show();$window.UpdateLayout()
-        $bitmap=New-Object Windows.Media.Imaging.RenderTargetBitmap(1080,980,96,96,[Windows.Media.PixelFormats]::Pbgra32)
+        $window.Width=1120;$window.Height=800;$window.Show();$window.UpdateLayout()
+        $bitmap=New-Object Windows.Media.Imaging.RenderTargetBitmap(1120,800,96,96,[Windows.Media.PixelFormats]::Pbgra32)
         $bitmap.Render($window);$encoder=New-Object Windows.Media.Imaging.PngBitmapEncoder;$encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
         $stream=[IO.File]::Create([IO.Path]::GetFullPath($SelfTestScreenshotPath));try{$encoder.Save($stream)}finally{$stream.Dispose()};$window.Close()
         "GUI_SCREENSHOT=$([IO.Path]::GetFullPath($SelfTestScreenshotPath))"

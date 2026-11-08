@@ -75,6 +75,13 @@ Steam 来源、迁移目标、自动迁移、回迁和存档备份集中在第�
 
 工具不会覆盖已经存在的冻结文件。若 Steam 游戏版本或 BuildID 与冻结版不同，将跳过游戏文件补齐，只迁移能被目标游戏版本识别的缺失 MOD。重复 Mod ID、缺失依赖或目标冲突会阻止自动迁移。
 
+## 路径从哪里来
+
+- 首次打开迁移页时，工具从本机 Steam 注册信息与 `steamapps/libraryfolders.vdf` 自动寻找 Project Zomboid 和 Workshop。
+- 存档/缓存默认检测当前 Windows 用户的 `Zomboid` 目录。
+- 如果继续使用同一个程序文件夹，`current-freeze.json` 和 `version-library.json` 会恢复上次选择的冻结版本和扫描目录。
+- Git 仓库与 Release 包不会写入或携带开发者、测试者或用户的个人游戏路径。
+
 迁移会在快照的 `migrations` 目录保存轻量事务，但不会自动压缩整个存档。需要存档快照时请单独点击“备份存档”。点击“回迁最近一次”时，工具只删除该事务新增且哈希未发生变化的文件，然后恢复迁移前的元数据和基线。若新增文件后来被修改，回迁会停止，不会强制删除。
 
 注意：文件和版本检查通过不代表 MOD 一定兼容已有存档。地图、世界生成、车辆和大型脚本 MOD 仍可能要求新档。
@@ -136,7 +143,7 @@ backups\     存档 ZIP 备份
 
 ## 当前版本
 
-项目版本：`0.5.1-preview`
+项目版本：`0.5.2-preview`
 
 这是根据一次 B42.21.0、154 个 Workshop 项目和 189 个存档 MOD 的真实迁移整理出的首个可运行版本。
 
@@ -153,7 +160,7 @@ The tool copies real files outside `steamapps`; it does not edit or fake Steam m
 
 ## 致谢与来源
 
-本项目的“复制游戏与缓存、把 Workshop MOD 本地化，并使用 `-nosteam` 与独立 `-cachedir` 启动”思路参考了 [PZ-Wiki-Modding/PZ-Backup](https://github.com/PZ-Wiki-Modding/PZ-Backup)。Steam 库自动检测、安全确认和可恢复操作的产品设计也参考了 [mysteriousdev777/steam-update-freezer](https://github.com/mysteriousdev777/steam-update-freezer)。
+本项目的“复制游戏与缓存、把 Workshop MOD 本地化，并使用 `-nosteam` 与独立 `-cachedir` 启动”思路参考了 [PZ-Wiki-Modding/PZ-Backup](https://github.com/PZ-Wiki-Modding/PZ-Backup)。Steam 库自动检测、安全确认和可恢复操作的产品设计也参考了 [mysteriousdev777/steam-update-freezer](https://github.com/mysteriousdev777/steam-update-freezer)。顶部导航、独立启动主视图和显眼的本地导入入口等 UI 信息架构参考了 [PvzLauncher/PvzLauncher](https://github.com/PvzLauncher/PvzLauncher)。本项目没有复制这些项目的代码或素材；详见 `NOTICE.md`。
 
 本仓库没有复制上述项目的源码；实现使用 PowerShell/WPF 独立编写，并采用不同的文件级快照方案。完整归属和许可证说明见 [NOTICE.md](NOTICE.md)。
 
