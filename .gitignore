@@ -1,6 +1,7 @@
 profiles/
 logs/
 current-freeze.json
+version-library.json
 *.tmp
 *.zip
 dist/

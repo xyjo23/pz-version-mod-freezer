@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0-preview - 2026-11-08
+
+- Added a persistent multi-directory frozen-version library.
+- Added recursive profile discovery with a six-level scan limit and drive-root guard.
+- Added version cards showing game version, Steam BuildID, MOD count and health.
+- Added direct launch, integrity verification and folder opening for the selected version.
+- Automatically sets the selected version as current before launch or verification.
+- Added health checks for the frozen game executable, independent cache and SHA-256 manifest.
+- Added path rebasing for frozen profiles moved with their complete directory.
+- Added an isolated two-profile version-library fixture test.
+
 ## 0.4.1-preview - 2026-11-08
 
 - Fixed empty migration targets being rejected as if they had to contain an existing frozen profile.

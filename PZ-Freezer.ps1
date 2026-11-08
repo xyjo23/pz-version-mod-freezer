@@ -1,5 +1,5 @@
 ﻿[CmdletBinding()]
-param([switch]$SelfTest,[string]$SelfTestProfilePath,[string]$SelfTestTargetPath,[ValidateSet('Full','Incremental','Invalid')][string]$SelfTestExpectedTargetMode,[string]$SelfTestScreenshotPath,[ValidateSet('Migration','Backup')][string]$SelfTestMode='Migration')
+param([switch]$SelfTest,[string]$SelfTestProfilePath,[string]$SelfTestTargetPath,[ValidateSet('Full','Incremental','Invalid')][string]$SelfTestExpectedTargetMode,[string]$SelfTestLibraryRoot,[int]$SelfTestExpectedProfileCount=-1,[switch]$SelfTestSelectFirstProfile,[string]$SelfTestScreenshotPath,[ValidateSet('Migration','Backup')][string]$SelfTestMode='Migration')
 
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
@@ -7,6 +7,7 @@ Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase,System
 
 $script:AppRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSCommandPath)).TrimEnd('\')
 $script:Manager = Join-Path $script:AppRoot 'tools\PZ-Freeze-Manager.ps1'
+$script:LibraryFile = Join-Path $script:AppRoot 'version-library.json'
 $script:Job = $null
 
 if(-not(Test-Path -LiteralPath $script:Manager -PathType Leaf)){
@@ -17,8 +18,8 @@ if(-not(Test-Path -LiteralPath $script:Manager -PathType Leaf)){
 [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="PZ Version &amp; Mod Freezer" Width="1080" Height="900"
-        MinWidth="940" MinHeight="860" WindowStartupLocation="CenterScreen"
+        Title="PZ Version &amp; Mod Freezer" Width="1080" Height="1040"
+        MinWidth="940" MinHeight="900" WindowStartupLocation="CenterScreen"
         Background="#111820" FontFamily="Microsoft YaHei UI">
   <Window.Resources>
     <Style TargetType="Button">
@@ -78,16 +79,22 @@ if(-not(Test-Path -LiteralPath $script:Manager -PathType Leaf)){
         </Grid>
       </GroupBox>
 
-      <GroupBox Grid.Row="2" Header="2. 迁移位置">
+      <GroupBox Grid.Row="2" Header="2. 版本库与迁移位置">
         <Grid>
           <Grid.ColumnDefinitions><ColumnDefinition Width="120"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-          <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="冻结版本"/>
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+          <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="版本库"/>
           <ComboBox Grid.Row="0" Grid.Column="1" x:Name="ProfilesBox" DisplayMemberPath="Display"/>
-          <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal"><Button x:Name="UseProfileButton" Content="使用此版本"/><Button x:Name="RefreshButton" Content="刷新"/></StackPanel>
-          <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="当前位置"/>
-          <TextBox Grid.Row="1" Grid.Column="1" x:Name="TargetProfileBox" IsReadOnly="True" Background="#EEF1F4"/>
-          <StackPanel Grid.Row="1" Grid.Column="2" Orientation="Horizontal"><Button x:Name="BrowseTargetProfileButton" Content="选择位置"/><Button x:Name="InspectTargetButton" Content="检测目标" Background="#2F6FA3" Foreground="White"/></StackPanel>
+          <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal"><Button x:Name="LaunchButton" Content="启动所选" Background="#2F9E72" Foreground="White"/><Button x:Name="UseProfileButton" Content="设为当前"/></StackPanel>
+          <TextBlock Grid.Row="1" VerticalAlignment="Top" Margin="0,9,0,0" Text="版本详情"/>
+          <Border Grid.Row="1" Grid.Column="1" Background="#F4FFFFFF" CornerRadius="4" Padding="9,6" Margin="4"><TextBlock x:Name="ProfileDetailsText" Text="尚未发现冻结版本。" TextWrapping="Wrap" Foreground="#405565"/></Border>
+          <StackPanel Grid.Row="1" Grid.Column="2" Orientation="Horizontal"><Button x:Name="VerifyButton" Content="校验所选"/><Button x:Name="OpenSelectedProfileButton" Content="打开目录"/></StackPanel>
+          <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="扫描位置"/>
+          <TextBlock Grid.Row="2" Grid.Column="1" x:Name="LibrarySummaryText" Text="默认扫描程序内 profiles；可以添加其它版本目录。" VerticalAlignment="Center" Foreground="#405565" Margin="8,4"/>
+          <StackPanel Grid.Row="2" Grid.Column="2" Orientation="Horizontal"><Button x:Name="AddLibraryRootButton" Content="添加目录"/><Button x:Name="RefreshButton" Content="重新扫描"/></StackPanel>
+          <TextBlock Grid.Row="3" VerticalAlignment="Center" Text="迁移目标"/>
+          <TextBox Grid.Row="3" Grid.Column="1" x:Name="TargetProfileBox" IsReadOnly="True" Background="#EEF1F4"/>
+          <StackPanel Grid.Row="3" Grid.Column="2" Orientation="Horizontal"><Button x:Name="BrowseTargetProfileButton" Content="选择位置"/><Button x:Name="InspectTargetButton" Content="检测目标" Background="#2F6FA3" Foreground="White"/></StackPanel>
         </Grid>
       </GroupBox>
 
@@ -103,7 +110,7 @@ if(-not(Test-Path -LiteralPath $script:Manager -PathType Leaf)){
           <Grid Grid.Row="1">
             <StackPanel x:Name="MigrationModePanel">
               <TextBlock x:Name="MigrationDecisionText" Text="迁移方式：请先检测目标；默认优先采用增量迁移。" Foreground="#405565" Margin="8,1,8,4"/>
-              <StackPanel Orientation="Horizontal"><Button x:Name="MigrationPreviewButton" Content="检查迁移内容"/><Button x:Name="MigrateButton" Content="开始自动迁移" Background="#2F9E72" Foreground="White" FontWeight="SemiBold"/><Button x:Name="RollbackMigrationButton" Content="回迁最近一次"/><Button x:Name="LaunchButton" Content="启动冻结版"/><Button x:Name="VerifyButton" Content="完整校验"/></StackPanel>
+              <StackPanel Orientation="Horizontal"><Button x:Name="MigrationPreviewButton" Content="检查迁移内容"/><Button x:Name="MigrateButton" Content="开始自动迁移" Background="#2F9E72" Foreground="White" FontWeight="SemiBold"/><Button x:Name="RollbackMigrationButton" Content="回迁最近一次"/></StackPanel>
               <TextBlock Text="已有有效冻结文件时只补齐缺失内容；空目录时自动创建完整冻结版本。" Foreground="#4F5F6B" Margin="8,3"/>
             </StackPanel>
             <Grid x:Name="BackupModePanel" Visibility="Collapsed">
@@ -135,7 +142,7 @@ if(-not(Test-Path -LiteralPath $script:Manager -PathType Leaf)){
 $reader = New-Object System.Xml.XmlNodeReader $xaml
 $window = [Windows.Markup.XamlReader]::Load($reader)
 $names = @('StatusText','GamePathBox','WorkshopPathBox','CachePathBox','RootPathBox','DetectButton',
-    'BrowseGameButton','BrowseWorkshopButton','BrowseCacheButton','LaunchButton','VerifyButton',
+    'BrowseGameButton','BrowseWorkshopButton','BrowseCacheButton','LaunchButton','VerifyButton','OpenSelectedProfileButton','AddLibraryRootButton','ProfileDetailsText','LibrarySummaryText',
     'OperationModeBox','MigrationModePanel','MigrationDecisionText','BackupModePanel','SaveProfileBox','RefreshSavesButton','BackupDestinationBox','BrowseBackupDestinationButton',
     'BackupButton','MigrationPreviewButton','MigrateButton','RollbackMigrationButton','BrowseTargetProfileButton','InspectTargetButton','TargetProfileBox','ProfilesBox','UseProfileButton','RefreshButton','StepText','NextStepText','LogBox','BusyBar','OpenButton','OpenDocsButton')
 foreach($name in $names){Set-Variable -Name $name -Value $window.FindName($name) -Scope Script}
@@ -203,7 +210,7 @@ function Set-Busy([bool]$Busy,[string]$Text){
     $BusyBar.IsIndeterminate=$Busy
     $BusyBar.Visibility=if($Busy){'Visible'}else{'Hidden'}
     $StatusText.Text=$Text
-    foreach($control in @($DetectButton,$LaunchButton,$VerifyButton,$BackupButton,$MigrationPreviewButton,$MigrateButton,$RollbackMigrationButton,$BrowseTargetProfileButton,$InspectTargetButton,$UseProfileButton,$RefreshButton,$OperationModeBox,$RefreshSavesButton,$BrowseBackupDestinationButton)){
+    foreach($control in @($DetectButton,$LaunchButton,$VerifyButton,$OpenSelectedProfileButton,$AddLibraryRootButton,$BackupButton,$MigrationPreviewButton,$MigrateButton,$RollbackMigrationButton,$BrowseTargetProfileButton,$InspectTargetButton,$UseProfileButton,$RefreshButton,$OperationModeBox,$RefreshSavesButton,$BrowseBackupDestinationButton)){
         $control.IsEnabled=-not $Busy
     }
 }
@@ -289,12 +296,12 @@ function Get-FrozenConfigFromFolder([string]$Folder){
     if(-not(Test-Path -LiteralPath $cfg.FreezeRoot -PathType Container)){throw "配置指向的冻结目录不存在：$($cfg.FreezeRoot)"}
     if(-not(Test-Path -LiteralPath $cfg.GamePath -PathType Container)){throw "冻结游戏目录不存在：$($cfg.GamePath)"}
     if(-not(Test-Path -LiteralPath $cfg.CachePath -PathType Container)){throw "冻结缓存目录不存在：$($cfg.CachePath)"}
-    $cfg.ManagerRoot=$script:AppRoot
+    $cfg|Add-Member -NotePropertyName ManagerRoot -NotePropertyValue $script:AppRoot -Force
     $cfg
 }
 
 function Set-CurrentFrozenConfig($Config,[string]$Label){
-    $Config.ManagerRoot=$script:AppRoot
+    $Config|Add-Member -NotePropertyName ManagerRoot -NotePropertyValue $script:AppRoot -Force
     $Config|ConvertTo-Json -Depth 15|Set-Content -LiteralPath (Join-Path $script:AppRoot 'current-freeze.json') -Encoding UTF8
     $TargetProfileBox.Text=$Config.FreezeRoot
     Add-Log "[通过] 当前冻结目标：$($Config.FreezeRoot)"
@@ -302,7 +309,9 @@ function Set-CurrentFrozenConfig($Config,[string]$Label){
     $StatusText.Text='已选择冻结目标'
     $script:TargetMode='Incremental'
     $MigrationDecisionText.Text='迁移方式：增量迁移（检测到已有有效冻结文件）。'
+    Register-VersionLibraryRoot $Config.FreezeRoot
     Refresh-Saves
+    return $true
 }
 
 function Select-ExternalFrozenProfile {
@@ -356,49 +365,150 @@ function Inspect-MigrationTarget {
     }
 }
 
+function Get-VersionLibraryRoots {
+    $roots=New-Object System.Collections.Generic.List[string]
+    $defaultRoot=Join-Path $script:AppRoot 'profiles'
+    if(Test-Path -LiteralPath $defaultRoot -PathType Container){$roots.Add([IO.Path]::GetFullPath($defaultRoot).TrimEnd('\'))}
+    if(Test-Path -LiteralPath $script:LibraryFile -PathType Leaf){
+        try{foreach($root in @((Get-Content -LiteralPath $script:LibraryFile -Raw|ConvertFrom-Json).LibraryRoots)){if($root -and (Test-Path -LiteralPath $root -PathType Container)){$roots.Add([IO.Path]::GetFullPath([string]$root).TrimEnd('\'))}}}catch{Add-Log "[警告] 版本库配置损坏，将忽略：$($_.Exception.Message)"}
+    }
+    if($SelfTestLibraryRoot -and (Test-Path -LiteralPath $SelfTestLibraryRoot -PathType Container)){$roots.Add([IO.Path]::GetFullPath($SelfTestLibraryRoot).TrimEnd('\'))}
+    @($roots|Select-Object -Unique)
+}
+
+function Save-VersionLibraryRoots([string[]]$Roots){
+    [ordered]@{SchemaVersion=1;Updated=(Get-Date).ToString('o');LibraryRoots=@($Roots|Where-Object{$_}|Select-Object -Unique)}|ConvertTo-Json -Depth 5|Set-Content -LiteralPath $script:LibraryFile -Encoding UTF8
+}
+
+function Register-VersionLibraryRoot([string]$Root){
+    if(-not $Root -or -not(Test-Path -LiteralPath $Root -PathType Container)){return}
+    $full=[IO.Path]::GetFullPath($Root).TrimEnd('\')
+    $roots=@(Get-VersionLibraryRoots)
+    if($full -notin $roots){Save-VersionLibraryRoots @($roots+$full)}
+}
+
+function Add-VersionLibraryRoot {
+    $dialog=New-Object System.Windows.Forms.FolderBrowserDialog
+    $dialog.Description='选择包含一个或多个冻结版本的目录；工具最多向下扫描 6 层'
+    $dialog.ShowNewFolderButton=$false
+    try{
+        if($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){
+            $full=[IO.Path]::GetFullPath($dialog.SelectedPath).TrimEnd('\')
+            if($full -eq [IO.Path]::GetPathRoot($full)){[System.Windows.MessageBox]::Show('请不要直接扫描整个磁盘，请选择更具体的版本库目录。','添加版本目录','OK','Information')|Out-Null;return}
+            Register-VersionLibraryRoot $full
+            Add-Log "[版本库] 已添加扫描位置：$full"
+            Refresh-Profiles
+        }
+    }finally{$dialog.Dispose()}
+}
+
+function Find-VersionConfigFiles([string]$Root){
+    $result=New-Object System.Collections.Generic.List[object]
+    $direct=Join-Path $Root 'metadata\freeze.json'
+    if(Test-Path -LiteralPath $direct -PathType Leaf){$result.Add((Get-Item -LiteralPath $direct))}
+    foreach($file in @(Get-ChildItem -LiteralPath $Root -Filter freeze.json -File -Recurse -Depth 6 -ErrorAction SilentlyContinue|Where-Object{$_.FullName -like '*\metadata\freeze.json'})){
+        if(-not($result|Where-Object{$_.FullName -ieq $file.FullName})){$result.Add($file)}
+    }
+    $result|ForEach-Object{$_}
+}
+
+function New-VersionLibraryItem($Config,[string]$ConfigPath){
+    $issues=New-Object System.Collections.Generic.List[string]
+    if(-not(Test-Path -LiteralPath $Config.FreezeRoot -PathType Container)){$issues.Add('冻结目录不存在')}
+    if(-not $Config.GamePath -or -not(Test-Path -LiteralPath (Join-Path $Config.GamePath 'ProjectZomboid64.exe') -PathType Leaf)){$issues.Add('游戏 EXE 缺失')}
+    if(-not $Config.CachePath -or -not(Test-Path -LiteralPath $Config.CachePath -PathType Container)){$issues.Add('独立缓存缺失')}
+    if(-not $Config.ManifestPath -or -not(Test-Path -LiteralPath (Join-Path $Config.ManifestPath 'game.sha256.csv') -PathType Leaf)){$issues.Add('游戏清单缺失')}
+    $healthy=$issues.Count -eq 0;$health=if($healthy){'就绪'}else{'需修复'}
+    $created=try{[datetime]$Config.Created}catch{[datetime]::MinValue}
+    $mods=if($null-ne$Config.EffectiveModCount){[int]$Config.EffectiveModCount}else{0}
+    [pscustomobject]@{
+        Display=('B{0} · Build {1} · {2} MOD · {3}' -f $Config.Version,$Config.BuildID,$mods,$health)
+        ConfigPath=$ConfigPath;FreezeRoot=[string]$Config.FreezeRoot;GamePath=[string]$Config.GamePath;CachePath=[string]$Config.CachePath
+        Version=[string]$Config.Version;BuildID=[string]$Config.BuildID;Created=$created;ModCount=$mods;Healthy=$healthy;Health=$health;Issues=@($issues)
+    }
+}
+
+function Read-VersionConfigForLibrary([string]$ConfigPath){
+    $cfg=Get-Content -LiteralPath $ConfigPath -Raw|ConvertFrom-Json
+    if($ConfigPath -like '*\metadata\freeze.json'){
+        $profileRoot=Split-Path -Parent (Split-Path -Parent $ConfigPath)
+        $cfg.FreezeRoot=$profileRoot;$cfg.GamePath=Join-Path $profileRoot 'game';$cfg.CachePath=Join-Path $profileRoot 'cache'
+        $cfg.ManifestPath=Join-Path $profileRoot 'manifests';$cfg.ReportPath=Join-Path $profileRoot 'reports';$cfg.BackupPath=Join-Path $profileRoot 'backups'
+    }
+    $cfg
+}
+
+function Update-SelectedProfileDetails {
+    $item=$ProfilesBox.SelectedItem
+    if(-not $item){$ProfileDetailsText.Text='尚未发现冻结版本。';return}
+    $created=if($item.Created -and $item.Created -ne [datetime]::MinValue){$item.Created.ToString('yyyy-MM-dd HH:mm')}else{'未知'}
+    $problem=if($item.Healthy){'无'}else{($item.Issues -join '；')}
+    $ProfileDetailsText.Text=("版本 B{0}    BuildID {1}    MOD {2}    状态：{3}`n创建：{4}    问题：{5}`n位置：{6}" -f $item.Version,$item.BuildID,$item.ModCount,$item.Health,$created,$problem,$item.FreezeRoot)
+}
+
 function Refresh-Profiles {
-    $ProfilesBox.Items.Clear()
-    $profileRoot=Join-Path $script:AppRoot 'profiles'
+    $ProfilesBox.Items.Clear();$seen=@{};$items=New-Object System.Collections.Generic.List[object]
     $currentPath=Join-Path $script:AppRoot 'current-freeze.json'
-    $current=if(Test-Path -LiteralPath $currentPath){Get-Content -LiteralPath $currentPath -Raw|ConvertFrom-Json}else{$null}
-    $seen=@{}
-    $selected=-1
-    if(Test-Path -LiteralPath $profileRoot -PathType Container){
-        foreach($file in @(Get-ChildItem -LiteralPath $profileRoot -Filter freeze.json -File -Recurse -ErrorAction SilentlyContinue|Sort-Object LastWriteTime -Descending)){
+    $current=if(Test-Path -LiteralPath $currentPath){try{Get-Content -LiteralPath $currentPath -Raw|ConvertFrom-Json}catch{$null}}else{$null}
+    $roots=@(Get-VersionLibraryRoots)
+    foreach($root in $roots){
+        foreach($file in @(Find-VersionConfigFiles $root)){
             try{
-                $cfg=Get-Content -LiteralPath $file.FullName -Raw|ConvertFrom-Json
-                $item=[pscustomobject]@{Display=("{0} · build {1} · {2}" -f $cfg.Version,$cfg.BuildID,([datetime]$cfg.Created).ToString('yyyy-MM-dd HH:mm'));ConfigPath=$file.FullName;FreezeRoot=$cfg.FreezeRoot}
-                [void]$ProfilesBox.Items.Add($item);$seen[$cfg.FreezeRoot.ToLowerInvariant()]=$true
-                if($current -and $current.FreezeRoot -ieq $cfg.FreezeRoot){$selected=$ProfilesBox.Items.Count-1}
-            }catch{Add-Log "[警告] 无法读取配置：$($file.FullName)"}
+                $cfg=Read-VersionConfigForLibrary $file.FullName;$key=$cfg.FreezeRoot.ToLowerInvariant()
+                if(-not $seen.ContainsKey($key)){$items.Add((New-VersionLibraryItem $cfg $file.FullName));$seen[$key]=$true}
+            }catch{Add-Log "[警告] 无法索引版本配置：$($file.FullName)；$($_.Exception.Message)"}
         }
     }
     if($current){
-        $TargetProfileBox.Text=$current.FreezeRoot
-        $script:TargetMode='Incremental'
-        $MigrationDecisionText.Text='迁移方式：增量迁移（当前已有冻结版本）。'
-        $key=$current.FreezeRoot.ToLowerInvariant()
-        if(-not $seen.ContainsKey($key)){
-            $item=[pscustomobject]@{Display=("[外部] {0} · build {1}" -f $current.Version,$current.BuildID);ConfigPath=$currentPath;FreezeRoot=$current.FreezeRoot}
-            [void]$ProfilesBox.Items.Add($item);$selected=$ProfilesBox.Items.Count-1
-        }
-    }else{$TargetProfileBox.Text='尚未选择迁移目标';$script:TargetMode='Unknown'}
-    if($ProfilesBox.Items.Count -gt 0){$ProfilesBox.SelectedIndex=if($selected -ge 0){$selected}else{0}}
-    else{$ProfilesBox.SelectedIndex=-1}
+        try{
+            $cfg=$current;$key=([string]$cfg.FreezeRoot).ToLowerInvariant()
+            if(-not $seen.ContainsKey($key)){$items.Add((New-VersionLibraryItem $cfg $currentPath));$seen[$key]=$true}
+        }catch{Add-Log "[警告] 当前版本配置不可用：$($_.Exception.Message)"}
+    }
+    $selected=-1
+    foreach($item in @($items|Sort-Object -Property @{Expression='Created';Descending=$true},@{Expression='Version';Descending=$true})){
+        [void]$ProfilesBox.Items.Add($item)
+        if($current -and $current.FreezeRoot -ieq $item.FreezeRoot){$selected=$ProfilesBox.Items.Count-1}
+    }
+    if($current){$TargetProfileBox.Text=$current.FreezeRoot;$script:TargetMode='Incremental';$MigrationDecisionText.Text='迁移方式：增量迁移（当前已有冻结版本）。'}
+    elseif(-not $TargetProfileBox.Text -or $TargetProfileBox.Text -eq '尚未选择迁移目标'){$TargetProfileBox.Text='尚未选择迁移目标';$script:TargetMode='Unknown'}
+    if($ProfilesBox.Items.Count -gt 0){$ProfilesBox.SelectedIndex=if($selected -ge 0){$selected}else{0}}else{$ProfilesBox.SelectedIndex=-1}
+    $LibrarySummaryText.Text=("已扫描 {0} 个目录，发现 {1} 个冻结版本。" -f $roots.Count,$ProfilesBox.Items.Count)
+    Update-SelectedProfileDetails
     Refresh-Saves
 }
 
 function Use-SelectedProfile {
     $item=$ProfilesBox.SelectedItem
-    if(-not $item){[System.Windows.MessageBox]::Show('请先选择一个冻结版本，或点击“选择冻结位置”。','PZ Freezer')|Out-Null;return}
+    if(-not $item){[System.Windows.MessageBox]::Show('请先从版本库选择一个冻结版本。','PZ Freezer')|Out-Null;return $false}
     try{
         $cfg=Get-Content -LiteralPath $item.ConfigPath -Raw|ConvertFrom-Json
         if($item.ConfigPath -like '*\metadata\freeze.json'){$cfg=Get-FrozenConfigFromFolder (Split-Path -Parent (Split-Path -Parent $item.ConfigPath))}
-        Set-CurrentFrozenConfig $cfg $item.Display
+        [void](Set-CurrentFrozenConfig $cfg $item.Display)
+        return $true
     }catch{
         Add-Log "[失败] 无法切换冻结版本：$($_.Exception.Message)"
+        if($SelfTest){throw}
         [System.Windows.MessageBox]::Show($_.Exception.Message,'无法切换冻结版本','OK','Error')|Out-Null
+        return $false
     }
+}
+
+function Launch-SelectedProfile {
+    $item=$ProfilesBox.SelectedItem
+    if(-not $item){[System.Windows.MessageBox]::Show('请先从版本库选择一个版本。','启动版本','OK','Information')|Out-Null;return}
+    if(-not $item.Healthy){[System.Windows.MessageBox]::Show(("所选版本需要修复：{0}" -f ($item.Issues -join '；')),'无法启动','OK','Error')|Out-Null;return}
+    if(Use-SelectedProfile){Start-ManagerAction 'Launch'}
+}
+
+function Verify-SelectedProfile {
+    if(Use-SelectedProfile){Start-ManagerAction 'Verify'}
+}
+
+function Open-SelectedProfile {
+    $item=$ProfilesBox.SelectedItem
+    if(-not $item -or -not(Test-Path -LiteralPath $item.FreezeRoot -PathType Container)){[System.Windows.MessageBox]::Show('所选版本目录不存在。','打开版本目录','OK','Error')|Out-Null;return}
+    Start-Process explorer.exe -ArgumentList $item.FreezeRoot
 }
 
 function Start-AutoPreview {
@@ -499,13 +609,16 @@ $MigrateButton.Add_Click({Start-AutoMigration})
 $RollbackMigrationButton.Add_Click({Start-ManagerAction 'RollbackMigration'})
 $BrowseTargetProfileButton.Add_Click({Select-ExternalFrozenProfile})
 $InspectTargetButton.Add_Click({[void](Inspect-MigrationTarget)})
-$LaunchButton.Add_Click({Start-ManagerAction 'Launch'})
-$VerifyButton.Add_Click({Start-ManagerAction 'Verify'})
+$LaunchButton.Add_Click({Launch-SelectedProfile})
+$VerifyButton.Add_Click({Verify-SelectedProfile})
+$OpenSelectedProfileButton.Add_Click({Open-SelectedProfile})
+$AddLibraryRootButton.Add_Click({Add-VersionLibraryRoot})
 $BackupButton.Add_Click({Start-ManagerAction 'BackupSave'})
 $RefreshSavesButton.Add_Click({Refresh-Saves})
 $BrowseBackupDestinationButton.Add_Click({Select-Folder $BackupDestinationBox '选择存档 ZIP 的外部保存位置'})
 $RefreshButton.Add_Click({Refresh-Profiles})
 $UseProfileButton.Add_Click({Use-SelectedProfile})
+$ProfilesBox.Add_SelectionChanged({Update-SelectedProfileDetails})
 $OpenButton.Add_Click({Start-Process explorer.exe -ArgumentList $script:AppRoot})
 $OpenDocsButton.Add_Click({
     Show-HelpWindow
@@ -520,7 +633,9 @@ $window.Add_Closing({param($sender,$e)
 Refresh-Profiles
 Update-OperationMode
 if($SelfTest){
-    if(-not $window -or -not $MigrateButton -or -not $LogBox -or -not $OperationModeBox -or -not $BackupModePanel){throw 'GUI 控件初始化失败。'}
+    if(-not $window -or -not $MigrateButton -or -not $LogBox -or -not $ProfilesBox -or -not $ProfileDetailsText -or -not $OperationModeBox -or -not $BackupModePanel){throw 'GUI 控件初始化失败。'}
+    if($SelfTestExpectedProfileCount -ge 0){if($ProfilesBox.Items.Count -ne $SelfTestExpectedProfileCount){throw "Expected $SelfTestExpectedProfileCount profiles but found $($ProfilesBox.Items.Count)."};"LIBRARY_COUNT_PASS=$($ProfilesBox.Items.Count)"}
+    if($SelfTestSelectFirstProfile){$testIndex=0;for($i=0;$i-lt$ProfilesBox.Items.Count;$i++){if($ProfilesBox.Items[$i].Healthy){$testIndex=$i;break}};$ProfilesBox.SelectedIndex=$testIndex;$expectedRoot=$ProfilesBox.SelectedItem.FreezeRoot;if(-not(Use-SelectedProfile)){throw 'Library selection self-test failed.'};$selectedConfig=Get-Content -LiteralPath (Join-Path $script:AppRoot 'current-freeze.json') -Raw|ConvertFrom-Json;if($selectedConfig.FreezeRoot -ine $expectedRoot){throw 'Selected profile was not written as current.'};"LIBRARY_SELECTION_PASS=$expectedRoot"}
     if($SelfTestProfilePath){
         $testConfig=Get-FrozenConfigFromFolder $SelfTestProfilePath
         if(-not $testConfig.FreezeRoot -or -not $testConfig.GamePath -or -not $testConfig.CachePath){throw '冻结位置解析自检失败。'}
@@ -535,8 +650,8 @@ if($SelfTest){
     }
     if($SelfTestScreenshotPath){
         $OperationModeBox.SelectedIndex=@{Migration=0;Backup=1}[$SelfTestMode];Update-OperationMode
-        $window.Width=1080;$window.Height=900;$window.Show();$window.UpdateLayout()
-        $bitmap=New-Object Windows.Media.Imaging.RenderTargetBitmap(1080,900,96,96,[Windows.Media.PixelFormats]::Pbgra32)
+        $window.Width=1080;$window.Height=1040;$window.Show();$window.UpdateLayout()
+        $bitmap=New-Object Windows.Media.Imaging.RenderTargetBitmap(1080,1040,96,96,[Windows.Media.PixelFormats]::Pbgra32)
         $bitmap.Render($window);$encoder=New-Object Windows.Media.Imaging.PngBitmapEncoder;$encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
         $stream=[IO.File]::Create([IO.Path]::GetFullPath($SelfTestScreenshotPath));try{$encoder.Save($stream)}finally{$stream.Dispose()};$window.Close()
         "GUI_SCREENSHOT=$([IO.Path]::GetFullPath($SelfTestScreenshotPath))"
