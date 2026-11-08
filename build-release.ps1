@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([string]$Version='0.4.0-preview')
+param([string]$Version='0.4.1-preview')
 
 $ErrorActionPreference='Stop'
 $root=[IO.Path]::GetFullPath((Split-Path -Parent $PSCommandPath)).TrimEnd('\')
@@ -7,7 +7,8 @@ $root=[IO.Path]::GetFullPath((Split-Path -Parent $PSCommandPath)).TrimEnd('\')
 $dist=Join-Path $root 'dist'
 $folderName=('PZ-Version-Mod-Freezer-{0}' -f $Version)
 $layout=Join-Path $dist ($folderName+'-release-layout')
-$appDir=Join-Path $layout $folderName
+$outerDir=Join-Path $layout $folderName
+$appDir=Join-Path $outerDir 'PZ-Freezer-Files'
 $zip=Join-Path $dist ($folderName+'.zip')
 
 $distFull=[IO.Path]::GetFullPath($dist).TrimEnd('\')
@@ -17,7 +18,7 @@ if(-not $layoutFull.StartsWith($distFull+'\',[StringComparison]::OrdinalIgnoreCa
 if(Test-Path -LiteralPath $layout){Remove-Item -LiteralPath $layout -Recurse -Force}
 if(Test-Path -LiteralPath $zip){Remove-Item -LiteralPath $zip -Force}
 New-Item -ItemType Directory -Path $appDir -Force|Out-Null
-Copy-Item -LiteralPath (Join-Path $root 'PZ-Freezer.exe') -Destination (Join-Path $layout 'PZ-Freezer.exe')
+Copy-Item -LiteralPath (Join-Path $root 'PZ-Freezer.exe') -Destination (Join-Path $outerDir 'PZ-Freezer.exe')
 
 foreach($file in @('PZ-Freezer.cmd','PZ-Freezer.ps1','README.md','LICENSE','NOTICE.md','SECURITY.md','CHANGELOG.md','project.json')){
     Copy-Item -LiteralPath (Join-Path $root $file) -Destination (Join-Path $appDir $file)

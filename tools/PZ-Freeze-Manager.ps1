@@ -6,6 +6,7 @@ param(
     [string]$BackupPath,
     [string]$BackupDestination,
     [string]$SavePath,
+    [string]$TargetRoot,
     [string]$SourceGame,
     [string]$SourceWorkshop,
     [string]$SourceCache,
@@ -145,7 +146,7 @@ function Invoke-Preflight {
     $workshopStats=Get-DirectoryStats $envInfo.Workshop
     $cacheStats=Get-DirectoryStats $envInfo.Cache
     $requiredBytes=[int64](($gameStats.Bytes+$workshopStats.Bytes+$cacheStats.Bytes)*1.15)
-    $targetRoot=if($ManagerRoot){[IO.Path]::GetFullPath($ManagerRoot)}else{Join-Path ([IO.Path]::GetPathRoot($envInfo.Game)) 'PZ_Freezer'}
+    $targetRoot=if($TargetRoot){[IO.Path]::GetFullPath($TargetRoot)}elseif($ManagerRoot){[IO.Path]::GetFullPath($ManagerRoot)}else{Join-Path ([IO.Path]::GetPathRoot($envInfo.Game)) 'PZ_Freezer'}
     $driveName=[IO.Path]::GetPathRoot($targetRoot).Substring(0,1)
     $drive=Get-PSDrive -Name $driveName
     $latestMods=$null
@@ -726,13 +727,23 @@ function Invoke-CreateFreeze {
         throw 'ManagerRoot 不能位于 Steam 管理的 steamapps 目录内。'
     }
     if (-not (Test-Path -LiteralPath $ManagerRoot)) { New-Item -ItemType Directory -Path $ManagerRoot -Force | Out-Null }
+    $requestedFreeze=$null
+    if($TargetRoot){
+        $requestedFreeze=[IO.Path]::GetFullPath($TargetRoot).TrimEnd('\')
+        if($requestedFreeze.StartsWith($steamManagedRoot.TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase) -or $requestedFreeze -ieq $steamManagedRoot){throw '迁移目标不能位于 Steam 管理的 steamapps 目录内。'}
+        if(Test-Path -LiteralPath $requestedFreeze){
+            if(-not(Test-Path -LiteralPath $requestedFreeze -PathType Container)){throw "迁移目标不是目录：$requestedFreeze"}
+            if(@(Get-ChildItem -LiteralPath $requestedFreeze -Force).Count -gt 0){throw '首次完整迁移要求目标目录为空。'}
+        }else{New-Item -ItemType Directory -Path $requestedFreeze -Force|Out-Null}
+    }
     $logs=Join-Path $ManagerRoot 'logs';New-Item -ItemType Directory -Path $logs -Force|Out-Null
     $script:LogFile=Join-Path $logs ('create_{0}.log' -f (Get-TimeStamp))
     Write-ManagerLog '开始创建 Project Zomboid 文件级冻结环境。'
     Assert-NoReparsePoints @($envInfo.Game,$envInfo.Workshop,$envInfo.Cache)
     $gameStats=Get-DirectoryStats $envInfo.Game;$wsStats=Get-DirectoryStats $envInfo.Workshop;$cacheStats=Get-DirectoryStats $envInfo.Cache
     $need=[int64](($gameStats.Bytes+$wsStats.Bytes+$cacheStats.Bytes)*1.15)
-    $drive=Get-PSDrive -Name ([IO.Path]::GetPathRoot($ManagerRoot).Substring(0,1))
+    $spaceTarget=if($requestedFreeze){$requestedFreeze}else{$ManagerRoot}
+    $drive=Get-PSDrive -Name ([IO.Path]::GetPathRoot($spaceTarget).Substring(0,1))
     if($drive.Free -lt $need){throw ('磁盘空间不足。预计至少需要 {0:N2} GiB，当前可用 {1:N2} GiB。' -f ($need/1GB),($drive.Free/1GB))}
     $latestMods=$null
     $latestFile=Join-Path $envInfo.Cache 'latestSave.ini'
@@ -763,8 +774,8 @@ function Invoke-CreateFreeze {
     }
     Write-ManagerLog "模组预检通过：$($analysis.WorkshopProjectCount) 个 Workshop 项目，$($analysis.EffectiveModCount) 个有效 Mod ID，最新存档使用 $($analysis.ActiveModCount) 个。" 'PASS'
     $tag='B{0}_build{1}_{2}' -f $envInfo.Version,$envInfo.BuildID,(Get-TimeStamp)
-    $freeze=Join-Path (Join-Path $ManagerRoot 'profiles') $tag
-    if(Test-Path -LiteralPath $freeze){throw "目标已存在：$freeze"}
+    $freeze=if($requestedFreeze){$requestedFreeze}else{Join-Path (Join-Path $ManagerRoot 'profiles') $tag}
+    if(-not $requestedFreeze -and (Test-Path -LiteralPath $freeze)){throw "目标已存在：$freeze"}
     $gameDest=Join-Path $freeze 'game';$cacheDest=Join-Path $freeze 'cache';$meta=Join-Path $freeze 'metadata';$manifests=Join-Path $freeze 'manifests';$reports=Join-Path $freeze 'reports';$backups=Join-Path $freeze 'backups'
     foreach($d in @($gameDest,$cacheDest,$meta,$manifests,$reports,$backups)){New-Item -ItemType Directory -Path $d -Force|Out-Null}
     Invoke-RobocopySafe $envInfo.Game $gameDest 'game'
@@ -834,7 +845,9 @@ if($Action -eq 'Preflight'){
     if(-not $ManagerRoot){$ManagerRoot=$PSScriptRoot|Split-Path -Parent}
     $logDir=Join-Path $ManagerRoot 'logs';if(-not(Test-Path -LiteralPath $logDir)){New-Item -ItemType Directory -Path $logDir -Force|Out-Null}
     $script:LogFile=Join-Path $logDir ('preflight_{0}.log' -f (Get-TimeStamp))
-    Invoke-Preflight|ConvertTo-Json -Depth 12
+    $preflightResult=Invoke-Preflight
+    $preflightResult|ConvertTo-Json -Depth 12
+    if(-not $preflightResult.Pass){throw '预检未通过，请根据日志中的磁盘空间、游戏进程或 MOD 依赖信息处理。'}
     exit 0
 }
 

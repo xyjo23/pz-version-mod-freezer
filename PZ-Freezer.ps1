@@ -1,5 +1,5 @@
 ﻿[CmdletBinding()]
-param([switch]$SelfTest,[string]$SelfTestProfilePath,[string]$SelfTestScreenshotPath,[ValidateSet('Full','Incremental','Backup')][string]$SelfTestMode='Full')
+param([switch]$SelfTest,[string]$SelfTestProfilePath,[string]$SelfTestTargetPath,[ValidateSet('Full','Incremental','Invalid')][string]$SelfTestExpectedTargetMode,[string]$SelfTestScreenshotPath,[ValidateSet('Migration','Backup')][string]$SelfTestMode='Migration')
 
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
@@ -17,7 +17,7 @@ if(-not(Test-Path -LiteralPath $script:Manager -PathType Leaf)){
 [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="PZ Version &amp; Mod Freezer" Width="1080" Height="960"
+        Title="PZ Version &amp; Mod Freezer" Width="1080" Height="900"
         MinWidth="940" MinHeight="860" WindowStartupLocation="CenterScreen"
         Background="#111820" FontFamily="Microsoft YaHei UI">
   <Window.Resources>
@@ -47,7 +47,7 @@ if(-not(Test-Path -LiteralPath $script:Manager -PathType Leaf)){
       </Setter>
     </Style>
   </Window.Resources>
-  <Grid Background="#5209131B" Margin="0">
+  <Grid Background="#EEF1F4" Margin="0">
     <Grid Margin="14">
       <Grid.RowDefinitions>
         <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
@@ -84,10 +84,10 @@ if(-not(Test-Path -LiteralPath $script:Manager -PathType Leaf)){
           <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
           <TextBlock Grid.Row="0" VerticalAlignment="Center" Text="冻结版本"/>
           <ComboBox Grid.Row="0" Grid.Column="1" x:Name="ProfilesBox" DisplayMemberPath="Display"/>
-          <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal"><Button x:Name="UseProfileButton" Content="设为当前"/><Button x:Name="RefreshButton" Content="刷新"/></StackPanel>
+          <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal"><Button x:Name="UseProfileButton" Content="使用此版本"/><Button x:Name="RefreshButton" Content="刷新"/></StackPanel>
           <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="当前位置"/>
           <TextBox Grid.Row="1" Grid.Column="1" x:Name="TargetProfileBox" IsReadOnly="True" Background="#EEF1F4"/>
-          <Button Grid.Row="1" Grid.Column="2" x:Name="BrowseTargetProfileButton" Content="选择冻结位置"/>
+          <StackPanel Grid.Row="1" Grid.Column="2" Orientation="Horizontal"><Button x:Name="BrowseTargetProfileButton" Content="选择位置"/><Button x:Name="InspectTargetButton" Content="检测目标" Background="#2F6FA3" Foreground="White"/></StackPanel>
         </Grid>
       </GroupBox>
 
@@ -97,17 +97,14 @@ if(-not(Test-Path -LiteralPath $script:Manager -PathType Leaf)){
           <DockPanel Grid.Row="0" Margin="2,0,2,6">
             <TextBlock Text="操作模式" Width="116" VerticalAlignment="Center"/>
             <ComboBox x:Name="OperationModeBox" SelectedIndex="0">
-              <ComboBoxItem Content="全量迁移模式" Tag="Full"/><ComboBoxItem Content="增量迁移模式" Tag="Incremental"/><ComboBoxItem Content="备份存档" Tag="Backup"/>
+              <ComboBoxItem Content="自动迁移（优先增量）" Tag="Migration"/><ComboBoxItem Content="备份存档" Tag="Backup"/>
             </ComboBox>
           </DockPanel>
           <Grid Grid.Row="1">
-            <StackPanel x:Name="FullModePanel" Orientation="Horizontal">
-              <Button x:Name="CreateButton" Content="一键创建完整冻结版本" Background="#2F9E72" Foreground="White" FontWeight="SemiBold"/>
-              <Button x:Name="PreflightButton" Content="只做预检"/><Button x:Name="LaunchButton" Content="启动当前冻结版"/><Button x:Name="VerifyButton" Content="完整校验"/>
-            </StackPanel>
-            <StackPanel x:Name="IncrementalModePanel" Visibility="Collapsed">
-              <StackPanel Orientation="Horizontal"><Button x:Name="MigrationPreviewButton" Content="增量检查"/><Button x:Name="MigrateButton" Content="迁移缺失内容" Background="#D9892B" Foreground="White" FontWeight="SemiBold"/><Button x:Name="RollbackMigrationButton" Content="回迁最近一次"/></StackPanel>
-              <TextBlock Text="只补齐缺失文件与缺失 Mod ID；已有文件不覆盖。" Foreground="#4F5F6B" Margin="8,3"/>
+            <StackPanel x:Name="MigrationModePanel">
+              <TextBlock x:Name="MigrationDecisionText" Text="迁移方式：请先检测目标；默认优先采用增量迁移。" Foreground="#405565" Margin="8,1,8,4"/>
+              <StackPanel Orientation="Horizontal"><Button x:Name="MigrationPreviewButton" Content="检查迁移内容"/><Button x:Name="MigrateButton" Content="开始自动迁移" Background="#2F9E72" Foreground="White" FontWeight="SemiBold"/><Button x:Name="RollbackMigrationButton" Content="回迁最近一次"/><Button x:Name="LaunchButton" Content="启动冻结版"/><Button x:Name="VerifyButton" Content="完整校验"/></StackPanel>
+              <TextBlock Text="已有有效冻结文件时只补齐缺失内容；空目录时自动创建完整冻结版本。" Foreground="#4F5F6B" Margin="8,3"/>
             </StackPanel>
             <Grid x:Name="BackupModePanel" Visibility="Collapsed">
               <Grid.ColumnDefinitions><ColumnDefinition Width="120"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -138,18 +135,12 @@ if(-not(Test-Path -LiteralPath $script:Manager -PathType Leaf)){
 $reader = New-Object System.Xml.XmlNodeReader $xaml
 $window = [Windows.Markup.XamlReader]::Load($reader)
 $names = @('StatusText','GamePathBox','WorkshopPathBox','CachePathBox','RootPathBox','DetectButton',
-    'BrowseGameButton','BrowseWorkshopButton','BrowseCacheButton','CreateButton','PreflightButton','LaunchButton','VerifyButton',
-    'OperationModeBox','FullModePanel','IncrementalModePanel','BackupModePanel','SaveProfileBox','RefreshSavesButton','BackupDestinationBox','BrowseBackupDestinationButton',
-    'BackupButton','MigrationPreviewButton','MigrateButton','RollbackMigrationButton','BrowseTargetProfileButton','TargetProfileBox','ProfilesBox','UseProfileButton','RefreshButton','StepText','NextStepText','LogBox','BusyBar','OpenButton','OpenDocsButton')
+    'BrowseGameButton','BrowseWorkshopButton','BrowseCacheButton','LaunchButton','VerifyButton',
+    'OperationModeBox','MigrationModePanel','MigrationDecisionText','BackupModePanel','SaveProfileBox','RefreshSavesButton','BackupDestinationBox','BrowseBackupDestinationButton',
+    'BackupButton','MigrationPreviewButton','MigrateButton','RollbackMigrationButton','BrowseTargetProfileButton','InspectTargetButton','TargetProfileBox','ProfilesBox','UseProfileButton','RefreshButton','StepText','NextStepText','LogBox','BusyBar','OpenButton','OpenDocsButton')
 foreach($name in $names){Set-Variable -Name $name -Value $window.FindName($name) -Scope Script}
 $RootPathBox.Text = $script:AppRoot
-$backgroundPath=Join-Path $script:AppRoot 'assets\pz-freezer-background.png'
-if(Test-Path -LiteralPath $backgroundPath -PathType Leaf){
-    $image=New-Object Windows.Media.Imaging.BitmapImage
-    $image.BeginInit();$image.CacheOption='OnLoad';$image.UriSource=[Uri]$backgroundPath;$image.EndInit();$image.Freeze()
-    $brush=New-Object Windows.Media.ImageBrush($image);$brush.Stretch='UniformToFill';$brush.Opacity=0.82
-    $window.Background=$brush
-}
+$script:TargetMode='Unknown'
 
 function Add-Log([string]$Text){
     if([string]::IsNullOrWhiteSpace($Text)){return}
@@ -212,7 +203,7 @@ function Set-Busy([bool]$Busy,[string]$Text){
     $BusyBar.IsIndeterminate=$Busy
     $BusyBar.Visibility=if($Busy){'Visible'}else{'Hidden'}
     $StatusText.Text=$Text
-    foreach($control in @($DetectButton,$CreateButton,$PreflightButton,$LaunchButton,$VerifyButton,$BackupButton,$MigrationPreviewButton,$MigrateButton,$RollbackMigrationButton,$BrowseTargetProfileButton,$UseProfileButton,$RefreshButton,$OperationModeBox,$RefreshSavesButton,$BrowseBackupDestinationButton)){
+    foreach($control in @($DetectButton,$LaunchButton,$VerifyButton,$BackupButton,$MigrationPreviewButton,$MigrateButton,$RollbackMigrationButton,$BrowseTargetProfileButton,$InspectTargetButton,$UseProfileButton,$RefreshButton,$OperationModeBox,$RefreshSavesButton,$BrowseBackupDestinationButton)){
         $control.IsEnabled=-not $Busy
     }
 }
@@ -247,9 +238,8 @@ function Select-Folder([System.Windows.Controls.TextBox]$Target,[string]$Descrip
 }
 
 function Update-OperationMode {
-    $mode=if($OperationModeBox.SelectedItem){$OperationModeBox.SelectedItem.Tag.ToString()}else{'Full'}
-    $FullModePanel.Visibility=if($mode -eq 'Full'){'Visible'}else{'Collapsed'}
-    $IncrementalModePanel.Visibility=if($mode -eq 'Incremental'){'Visible'}else{'Collapsed'}
+    $mode=if($OperationModeBox.SelectedItem){$OperationModeBox.SelectedItem.Tag.ToString()}else{'Migration'}
+    $MigrationModePanel.Visibility=if($mode -eq 'Migration'){'Visible'}else{'Collapsed'}
     $BackupModePanel.Visibility=if($mode -eq 'Backup'){'Visible'}else{'Collapsed'}
     if($mode -eq 'Backup'){Refresh-Saves}
 }
@@ -310,24 +300,60 @@ function Set-CurrentFrozenConfig($Config,[string]$Label){
     Add-Log "[通过] 当前冻结目标：$($Config.FreezeRoot)"
     if($Label){Add-Log "        $Label"}
     $StatusText.Text='已选择冻结目标'
+    $script:TargetMode='Incremental'
+    $MigrationDecisionText.Text='迁移方式：增量迁移（检测到已有有效冻结文件）。'
     Refresh-Saves
 }
 
 function Select-ExternalFrozenProfile {
     $dialog=New-Object System.Windows.Forms.FolderBrowserDialog
-    $dialog.Description='选择包含 current-freeze.json 的管理器目录，或包含 game/cache/metadata 的具体冻结版本目录'
-    $dialog.ShowNewFolderButton=$false
+    $dialog.Description='选择迁移目标：已有冻结版目录，或用于首次完整迁移的空目录'
+    $dialog.ShowNewFolderButton=$true
     if(Test-Path -LiteralPath $TargetProfileBox.Text -PathType Container){$dialog.SelectedPath=$TargetProfileBox.Text}
     try{
         if($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){
-            $cfg=Get-FrozenConfigFromFolder $dialog.SelectedPath
-            Set-CurrentFrozenConfig $cfg ('版本 {0} · BuildID {1}' -f $cfg.Version,$cfg.BuildID)
-            Refresh-Profiles
+            $TargetProfileBox.Text=[IO.Path]::GetFullPath($dialog.SelectedPath).TrimEnd('\')
+            $script:TargetMode='Unknown'
+            $SaveProfileBox.Items.Clear()
+            $MigrationDecisionText.Text='迁移方式：尚未检测。点击“检测目标”后自动判断。'
+            $StatusText.Text='等待检测目标'
+            Add-Log "[位置] 已选择迁移目标：$($TargetProfileBox.Text)"
         }
     }catch{
         Add-Log "[失败] 无法选择冻结位置：$($_.Exception.Message)"
         [System.Windows.MessageBox]::Show($_.Exception.Message,'无法选择冻结位置','OK','Error')|Out-Null
     }finally{$dialog.Dispose()}
+}
+
+function Inspect-MigrationTarget {
+    $target=$TargetProfileBox.Text.Trim()
+    if(-not $target -or -not(Test-Path -LiteralPath $target -PathType Container)){
+        [System.Windows.MessageBox]::Show('请先选择一个存在的迁移目标目录。','检测迁移目标','OK','Information')|Out-Null
+        return $false
+    }
+    $target=[IO.Path]::GetFullPath($target).TrimEnd('\');$TargetProfileBox.Text=$target
+    try{
+        $cfg=Get-FrozenConfigFromFolder $target
+        Set-CurrentFrozenConfig $cfg ('版本 {0} · BuildID {1}' -f $cfg.Version,$cfg.BuildID)
+        Add-Log '[检测] 已发现有效冻结文件，将执行增量迁移。'
+        return $true
+    }catch{
+        $entries=@(Get-ChildItem -LiteralPath $target -Force -ErrorAction Stop)
+        if($entries.Count -eq 0){
+            $script:TargetMode='Full'
+            $MigrationDecisionText.Text='迁移方式：首次完整迁移（目标目录为空）。'
+            $StatusText.Text='目标为空：完整迁移'
+            Add-Log '[检测] 目标目录为空，将执行首次完整迁移。'
+            return $true
+        }
+        $script:TargetMode='Invalid'
+        $MigrationDecisionText.Text='迁移方式：已停止（非空目录不是有效冻结版）。'
+        $StatusText.Text='目标目录无效'
+        $message="所选目录不是有效冻结版，而且并非空目录。为避免覆盖无关文件，工具不会继续。`n`n$target"
+        Add-Log "[失败] $message"
+        if(-not $SelfTest){[System.Windows.MessageBox]::Show($message,'检测迁移目标','OK','Error')|Out-Null}
+        return $false
+    }
 }
 
 function Refresh-Profiles {
@@ -349,12 +375,14 @@ function Refresh-Profiles {
     }
     if($current){
         $TargetProfileBox.Text=$current.FreezeRoot
+        $script:TargetMode='Incremental'
+        $MigrationDecisionText.Text='迁移方式：增量迁移（当前已有冻结版本）。'
         $key=$current.FreezeRoot.ToLowerInvariant()
         if(-not $seen.ContainsKey($key)){
             $item=[pscustomobject]@{Display=("[外部] {0} · build {1}" -f $current.Version,$current.BuildID);ConfigPath=$currentPath;FreezeRoot=$current.FreezeRoot}
             [void]$ProfilesBox.Items.Add($item);$selected=$ProfilesBox.Items.Count-1
         }
-    }else{$TargetProfileBox.Text='尚未选择冻结版本'}
+    }else{$TargetProfileBox.Text='尚未选择迁移目标';$script:TargetMode='Unknown'}
     if($ProfilesBox.Items.Count -gt 0){$ProfilesBox.SelectedIndex=if($selected -ge 0){$selected}else{0}}
     else{$ProfilesBox.SelectedIndex=-1}
     Refresh-Saves
@@ -373,6 +401,16 @@ function Use-SelectedProfile {
     }
 }
 
+function Start-AutoPreview {
+    if($script:TargetMode -in @('Unknown','Invalid')){if(-not(Inspect-MigrationTarget)){return}}
+    if($script:TargetMode -eq 'Full'){Start-ManagerAction 'Preflight'}else{Start-ManagerAction 'PreviewMigration'}
+}
+
+function Start-AutoMigration {
+    if($script:TargetMode -in @('Unknown','Invalid')){if(-not(Inspect-MigrationTarget)){return}}
+    if($script:TargetMode -eq 'Full'){Start-ManagerAction 'Create'}else{Start-ManagerAction 'Migrate'}
+}
+
 function Start-ManagerAction([string]$Action){
     if($script:Job -and $script:Job.State -in @('Running','NotStarted')){return}
     if($Action -notin @('Create','Preflight') -and -not(Test-Path -LiteralPath (Join-Path $script:AppRoot 'current-freeze.json'))){
@@ -387,7 +425,7 @@ function Start-ManagerAction([string]$Action){
         }
     }
     if($Action -eq 'Create'){
-        $answer=[System.Windows.MessageBox]::Show("将创建完整独立副本并计算 SHA-256。`n`n请先退出游戏；操作可能持续较长时间，并需要足够磁盘空间。`n不会修改 Steam 原版。`n`n是否继续？",'创建冻结版本','YesNo','Question')
+        $answer=[System.Windows.MessageBox]::Show("目标目录为空，将执行首次完整迁移：`n$($TargetProfileBox.Text)`n`n将复制游戏、MOD、配置和存档并计算 SHA-256。请先退出游戏；操作可能持续较长时间。`n不会修改 Steam 原版。`n`n是否继续？",'确认完整迁移','YesNo','Question')
         if($answer -ne 'Yes'){return}
     }
     if($Action -eq 'Migrate'){
@@ -409,16 +447,17 @@ function Start-ManagerAction([string]$Action){
     Set-Step "准备$label" '读取配置并开始执行'
     Add-Log ("[{0}] 开始：{1}" -f (Get-Date -Format 'HH:mm:ss'),$label)
     $manager=$script:Manager;$root=$script:AppRoot;$game=$GamePathBox.Text;$workshop=$WorkshopPathBox.Text;$cache=$CachePathBox.Text
-    $selectedSave=if($SaveProfileBox.SelectedItem){$SaveProfileBox.SelectedItem.Path}else{''};$backupDestination=$BackupDestinationBox.Text
+    $selectedSave=if($SaveProfileBox.SelectedItem){$SaveProfileBox.SelectedItem.Path}else{''};$backupDestination=$BackupDestinationBox.Text;$targetRoot=$TargetProfileBox.Text
     $script:Job=Start-Job -ScriptBlock {
-        param($Manager,$ActionName,$Root,$Game,$Workshop,$Cache,$SelectedSave,$BackupDestination)
+        param($Manager,$ActionName,$Root,$Game,$Workshop,$Cache,$SelectedSave,$BackupDestination,$TargetRoot)
         $args=@('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',$Manager,'-Action',$ActionName,'-ManagerRoot',$Root)
         if($ActionName -in @('Create','Preflight','PreviewMigration','Migrate')){$args+=@('-SourceGame',$Game,'-SourceWorkshop',$Workshop,'-SourceCache',$Cache)}
+        if($ActionName -in @('Create','Preflight')){$args+=@('-TargetRoot',$TargetRoot)}
         if($ActionName -eq 'Migrate'){$args+='-ConfirmedExistingTarget'}
         if($ActionName -eq 'BackupSave'){$args+=@('-SavePath',$SelectedSave,'-BackupDestination',$BackupDestination)}
         & powershell.exe @args 2>&1|ForEach-Object{$_.ToString()}
         if($LASTEXITCODE -ne 0){throw "核心进程退出码：$LASTEXITCODE"}
-    } -ArgumentList $manager,$Action,$root,$game,$workshop,$cache,$selectedSave,$backupDestination
+    } -ArgumentList $manager,$Action,$root,$game,$workshop,$cache,$selectedSave,$backupDestination,$targetRoot
     $JobTimer.Start()
 }
 
@@ -455,12 +494,11 @@ $BrowseGameButton.Add_Click({Select-Folder $GamePathBox '选择 Project Zomboid 
 $BrowseWorkshopButton.Add_Click({Select-Folder $WorkshopPathBox '选择 Steam Workshop 的 108600 目录'})
 $BrowseCacheButton.Add_Click({Select-Folder $CachePathBox '选择 Zomboid 缓存/存档目录'})
 $OperationModeBox.Add_SelectionChanged({Update-OperationMode})
-$CreateButton.Add_Click({Start-ManagerAction 'Create'})
-$PreflightButton.Add_Click({Start-ManagerAction 'Preflight'})
-$MigrationPreviewButton.Add_Click({Start-ManagerAction 'PreviewMigration'})
-$MigrateButton.Add_Click({Start-ManagerAction 'Migrate'})
+$MigrationPreviewButton.Add_Click({Start-AutoPreview})
+$MigrateButton.Add_Click({Start-AutoMigration})
 $RollbackMigrationButton.Add_Click({Start-ManagerAction 'RollbackMigration'})
 $BrowseTargetProfileButton.Add_Click({Select-ExternalFrozenProfile})
+$InspectTargetButton.Add_Click({[void](Inspect-MigrationTarget)})
 $LaunchButton.Add_Click({Start-ManagerAction 'Launch'})
 $VerifyButton.Add_Click({Start-ManagerAction 'Verify'})
 $BackupButton.Add_Click({Start-ManagerAction 'BackupSave'})
@@ -482,16 +520,23 @@ $window.Add_Closing({param($sender,$e)
 Refresh-Profiles
 Update-OperationMode
 if($SelfTest){
-    if(-not $window -or -not $CreateButton -or -not $LogBox -or -not $OperationModeBox -or -not $BackupModePanel){throw 'GUI 控件初始化失败。'}
+    if(-not $window -or -not $MigrateButton -or -not $LogBox -or -not $OperationModeBox -or -not $BackupModePanel){throw 'GUI 控件初始化失败。'}
     if($SelfTestProfilePath){
         $testConfig=Get-FrozenConfigFromFolder $SelfTestProfilePath
         if(-not $testConfig.FreezeRoot -or -not $testConfig.GamePath -or -not $testConfig.CachePath){throw '冻结位置解析自检失败。'}
         "PROFILE_RESOLVE_PASS=$($testConfig.FreezeRoot)"
     }
+    if($SelfTestTargetPath){
+        $TargetProfileBox.Text=$SelfTestTargetPath
+        $targetResult=Inspect-MigrationTarget
+        if($SelfTestExpectedTargetMode){if($script:TargetMode -ne $SelfTestExpectedTargetMode){throw "Expected target mode $SelfTestExpectedTargetMode but got $script:TargetMode."}}
+        elseif(-not $targetResult){throw 'Target inspection self-test failed.'}
+        "TARGET_MODE_PASS=$script:TargetMode"
+    }
     if($SelfTestScreenshotPath){
-        $OperationModeBox.SelectedIndex=@{Full=0;Incremental=1;Backup=2}[$SelfTestMode];Update-OperationMode
-        $window.Width=1080;$window.Height=960;$window.Show();$window.UpdateLayout()
-        $bitmap=New-Object Windows.Media.Imaging.RenderTargetBitmap(1080,960,96,96,[Windows.Media.PixelFormats]::Pbgra32)
+        $OperationModeBox.SelectedIndex=@{Migration=0;Backup=1}[$SelfTestMode];Update-OperationMode
+        $window.Width=1080;$window.Height=900;$window.Show();$window.UpdateLayout()
+        $bitmap=New-Object Windows.Media.Imaging.RenderTargetBitmap(1080,900,96,96,[Windows.Media.PixelFormats]::Pbgra32)
         $bitmap.Render($window);$encoder=New-Object Windows.Media.Imaging.PngBitmapEncoder;$encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
         $stream=[IO.File]::Create([IO.Path]::GetFullPath($SelfTestScreenshotPath));try{$encoder.Save($stream)}finally{$stream.Dispose()};$window.Close()
         "GUI_SCREENSHOT=$([IO.Path]::GetFullPath($SelfTestScreenshotPath))"

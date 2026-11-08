@@ -8,13 +8,13 @@ using System.Windows.Forms;
 [assembly: AssemblyDescription("Portable Project Zomboid version and mod snapshot manager")]
 [assembly: AssemblyProduct("PZ Version & Mod Freezer")]
 [assembly: AssemblyCompany("xyjo23")]
-[assembly: AssemblyVersion("0.4.0.0")]
-[assembly: AssemblyFileVersion("0.4.0.0")]
+[assembly: AssemblyVersion("0.4.1.0")]
+[assembly: AssemblyFileVersion("0.4.1.0")]
 
 internal static class PZFreezerLauncher
 {
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
         try
         {
@@ -26,10 +26,12 @@ internal static class PZFreezerLauncher
 
             string windows = Environment.GetEnvironmentVariable("WINDIR") ?? @"C:\Windows";
             string powershell = Path.Combine(windows, @"System32\WindowsPowerShell\v1.0\powershell.exe");
+            string arguments = "-NoLogo -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File " + Quote(script);
+            foreach (string argument in args) arguments += " " + Quote(argument);
             var start = new ProcessStartInfo
             {
                 FileName = powershell,
-                Arguments = "-NoLogo -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File " + Quote(script),
+                Arguments = arguments,
                 WorkingDirectory = appRoot,
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -48,7 +50,7 @@ internal static class PZFreezerLauncher
     {
         string besideExe = Path.Combine(root, "PZ-Freezer.ps1");
         if (File.Exists(besideExe)) return besideExe;
-        string[] folders = Directory.GetDirectories(root, "PZ-Version-Mod-Freezer-*");
+        string[] folders = Directory.GetDirectories(root);
         Array.Sort(folders, StringComparer.OrdinalIgnoreCase);
         Array.Reverse(folders);
         foreach (string folder in folders)

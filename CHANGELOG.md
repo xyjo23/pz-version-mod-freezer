@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.1-preview - 2026-11-08
+
+- Fixed empty migration targets being rejected as if they had to contain an existing frozen profile.
+- Replaced separate full/incremental choices with automatic target detection.
+- Existing valid frozen targets use incremental migration; empty targets use first-time full migration.
+- Non-empty invalid targets are blocked to prevent unrelated files from being overwritten.
+- Removed the generated background image to reduce package size.
+- Added one outer version folder to the ZIP; it contains the EXE and `PZ-Freezer-Files`.
+
 ## 0.4.0-preview - 2026-11-08
 
 - Changed the ZIP layout to place `PZ-Freezer.exe` beside a single versioned application folder.
