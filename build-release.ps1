@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([string]$Version='0.5.3-preview')
+param([string]$Version='0.5.4-preview')
 
 $ErrorActionPreference='Stop'
 $root=[IO.Path]::GetFullPath((Split-Path -Parent $PSCommandPath)).TrimEnd('\')

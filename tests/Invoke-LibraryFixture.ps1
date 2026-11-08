@@ -11,6 +11,7 @@ try{
     New-Item -ItemType Directory -Path $app,$library,(Join-Path $app 'profiles') -Force|Out-Null
     Copy-Item -LiteralPath (Join-Path $projectRoot 'PZ-Freezer.ps1'),(Join-Path $projectRoot 'README.md') -Destination $app
     Copy-Item -LiteralPath (Join-Path $projectRoot 'tools') -Destination (Join-Path $app 'tools') -Recurse
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'assets') -Destination (Join-Path $app 'assets') -Recurse
     foreach($spec in @(@{Name='B42_A';Version='42.21.0';Build='100';Healthy=$true},@{Name='B41_B';Version='41.78.16';Build='200';Healthy=$false})){
         $profile=Join-Path $library $spec.Name
         $metadata=Join-Path $profile 'metadata'

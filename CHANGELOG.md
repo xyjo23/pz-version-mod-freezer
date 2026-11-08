@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.4-preview - 2026-11-08
+
+- Applied the project icon to the WPF window title bar and Windows taskbar process group.
+- Replaced the permanently visible version detail panel with an on-demand right-side flyout.
+- The flyout opens only after selecting a version and closes through its close button or backdrop.
+- Changed the successful current-version action from "Set as current" to a disabled "Current version" state.
+- Marked the active frozen version in the version list and preserved Steam-specific button states.
+- Added window-icon, flyout-open and current-button-state self-tests.
+
 ## 0.5.3-preview - 2026-11-08
 
 - Added the live Steam-managed Project Zomboid installation to the version list by default.

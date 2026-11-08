@@ -1,9 +1,17 @@
 ﻿[CmdletBinding()]
-param([switch]$SelfTest,[string]$SelfTestProfilePath,[string]$SelfTestTargetPath,[ValidateSet('Full','Incremental','Invalid')][string]$SelfTestExpectedTargetMode,[string]$SelfTestLibraryRoot,[int]$SelfTestExpectedProfileCount=-1,[switch]$SelfTestExpectedSteamEntry,[switch]$SelfTestDisableSteamDetection,[switch]$SelfTestSelectFirstProfile,[string]$SelfTestScreenshotPath,[ValidateSet('Versions','Migration')][string]$SelfTestTab='Versions',[ValidateSet('Migration','Backup')][string]$SelfTestMode='Migration')
+param([switch]$SelfTest,[string]$SelfTestProfilePath,[string]$SelfTestTargetPath,[ValidateSet('Full','Incremental','Invalid')][string]$SelfTestExpectedTargetMode,[string]$SelfTestLibraryRoot,[int]$SelfTestExpectedProfileCount=-1,[switch]$SelfTestExpectedSteamEntry,[switch]$SelfTestDisableSteamDetection,[switch]$SelfTestSelectFirstProfile,[switch]$SelfTestOpenFirstProfileFlyout,[string]$SelfTestScreenshotPath,[ValidateSet('Versions','Migration')][string]$SelfTestTab='Versions',[ValidateSet('Migration','Backup')][string]$SelfTestMode='Migration')
 
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase,System.Windows.Forms
+Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+public static class PZFreezerShell {
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    public static extern int SetCurrentProcessExplicitAppUserModelID(string appID);
+}
+'@
+[void][PZFreezerShell]::SetCurrentProcessExplicitAppUserModelID('xyjo23.PZVersionModFreezer')
 
 $script:AppRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSCommandPath)).TrimEnd('\')
 $script:Manager = Join-Path $script:AppRoot 'tools\PZ-Freeze-Manager.ps1'
@@ -12,6 +20,7 @@ $script:Job = $null
 $script:SteamEnvironment = $null
 $script:SteamDetectionError = $null
 $script:SteamDetectionAttempted = $false
+$script:SuppressProfileFlyout = $false
 
 if(-not(Test-Path -LiteralPath $script:Manager -PathType Leaf)){
     [System.Windows.MessageBox]::Show("缺少核心文件：$script:Manager",'PZ Version & Mod Freezer','OK','Error')|Out-Null
@@ -72,18 +81,24 @@ if(-not(Test-Path -LiteralPath $script:Manager -PathType Leaf)){
             <StackPanel><TextBlock Text="版本库" FontSize="22" FontWeight="SemiBold"/><TextBlock x:Name="LibrarySummaryText" Text="正在扫描版本库……" Foreground="#AAB3BB" Margin="0,5,0,0"/></StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"><Button x:Name="RefreshButton" Content="刷新"/><Button x:Name="AddLibraryRootButton" Content="＋ 添加版本" Style="{StaticResource AccentButtonStyle}"/></StackPanel>
           </Grid>
-          <Grid Grid.Row="1">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="330"/><ColumnDefinition Width="14"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-            <Border Grid.Column="0" Background="#202328" BorderBrush="#41464D" BorderThickness="1" CornerRadius="7" Padding="8">
-              <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions><TextBlock Text="已添加的版本" FontWeight="SemiBold" Foreground="#C7CFD6" Margin="10,8,10,7"/><ListBox Grid.Row="1" x:Name="ProfilesBox" ScrollViewer.HorizontalScrollBarVisibility="Disabled"><ListBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding Display}" Foreground="#F2F5F7" TextWrapping="Wrap"/></DataTemplate></ListBox.ItemTemplate></ListBox></Grid>
-            </Border>
-            <Border Grid.Column="2" Background="#34373C" BorderBrush="#484D54" BorderThickness="1" CornerRadius="7" Padding="28">
+          <Grid Grid.Row="1" ClipToBounds="True">
+            <Border Background="#202328" BorderBrush="#41464D" BorderThickness="1" CornerRadius="7" Padding="16">
               <Grid>
-                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                <StackPanel HorizontalAlignment="Center"><TextBlock Text="PROJECT ZOMBOID" FontSize="13" FontWeight="SemiBold" Foreground="#8FE7EE" HorizontalAlignment="Center"/><TextBlock x:Name="SelectedVersionTitleText" Text="选择一个版本" FontSize="30" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,7,0,0"/></StackPanel>
-                <TextBlock Grid.Row="1" x:Name="ProfileDetailsText" Text="从左侧选择版本，或使用右上角“添加版本”。" TextWrapping="Wrap" TextAlignment="Center" Foreground="#C0C8CF" FontSize="14" LineHeight="24" Margin="10,20,10,10"/>
-                <Border Grid.Row="2" Background="#292C31" BorderBrush="#42474E" BorderThickness="1" CornerRadius="5" Padding="13" Margin="0,10,0,14" VerticalAlignment="Bottom"><TextBlock Text="版本之间保持独立的游戏文件、MOD 与 cache。当前页面只管理和启动版本，不会修改 Steam 安装。" TextWrapping="Wrap" Foreground="#AEB8C0"/></Border>
-                <Grid Grid.Row="3"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="260"/></Grid.ColumnDefinitions><WrapPanel VerticalAlignment="Bottom"><Button x:Name="OpenSelectedProfileButton" Content="打开目录"/><Button x:Name="VerifyButton" Content="校验"/><Button x:Name="UseProfileButton" Content="设为当前"/></WrapPanel><Button Grid.Column="1" x:Name="LaunchButton" Height="62" Content="启动所选版本" Style="{StaticResource AccentButtonStyle}" FontSize="16"/></Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="430"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                <Grid Grid.Column="0"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions><TextBlock Text="已添加的版本" FontWeight="SemiBold" Foreground="#C7CFD6" Margin="8,3,8,9"/><ListBox Grid.Row="1" x:Name="ProfilesBox" ScrollViewer.HorizontalScrollBarVisibility="Disabled"><ListBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding Display}" Foreground="#F2F5F7" TextWrapping="Wrap"/></DataTemplate></ListBox.ItemTemplate></ListBox></Grid>
+                <StackPanel Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="30"><TextBlock Text="选择一个版本" FontSize="24" FontWeight="SemiBold" HorizontalAlignment="Center"/><TextBlock Text="点击左侧版本后，将从右侧打开版本详情和启动操作。" Foreground="#89949D" TextWrapping="Wrap" TextAlignment="Center" Margin="0,10,0,0"/></StackPanel>
+              </Grid>
+            </Border>
+            <Border x:Name="ProfileFlyoutBackdrop" Background="#990B0D10" Visibility="Collapsed" Panel.ZIndex="2"/>
+            <Border x:Name="ProfileFlyout" Width="650" HorizontalAlignment="Right" Background="#34373C" BorderBrush="#5A6068" BorderThickness="1,0,0,0" Padding="30" Visibility="Collapsed" Panel.ZIndex="3">
+              <Border.Effect><DropShadowEffect Color="Black" BlurRadius="22" ShadowDepth="-5" Opacity="0.55"/></Border.Effect>
+              <Grid>
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                <Button x:Name="CloseProfileFlyoutButton" Content="✕" HorizontalAlignment="Right" Style="{StaticResource QuietButtonStyle}" FontSize="17" Padding="10,4"/>
+                <StackPanel Grid.Row="1" HorizontalAlignment="Center" Margin="0,8,0,0"><TextBlock Text="PROJECT ZOMBOID" FontSize="13" FontWeight="SemiBold" Foreground="#8FE7EE" HorizontalAlignment="Center"/><TextBlock x:Name="SelectedVersionTitleText" Text="选择一个版本" FontSize="30" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,7,0,0"/></StackPanel>
+                <TextBlock Grid.Row="2" x:Name="ProfileDetailsText" Text="选择版本后显示详情。" TextWrapping="Wrap" TextAlignment="Center" Foreground="#C0C8CF" FontSize="14" LineHeight="24" Margin="10,20,10,10"/>
+                <Border Grid.Row="3" Background="#292C31" BorderBrush="#42474E" BorderThickness="1" CornerRadius="5" Padding="13" Margin="0,10,0,14" VerticalAlignment="Bottom"><TextBlock Text="冻结版本拥有独立的游戏文件、MOD 与 cache；Steam 原版始终由 Steam 管理。" TextWrapping="Wrap" Foreground="#AEB8C0"/></Border>
+                <Grid Grid.Row="4"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="260"/></Grid.ColumnDefinitions><WrapPanel VerticalAlignment="Bottom"><Button x:Name="OpenSelectedProfileButton" Content="打开目录"/><Button x:Name="VerifyButton" Content="校验"/><Button x:Name="UseProfileButton" Content="设为当前"/></WrapPanel><Button Grid.Column="1" x:Name="LaunchButton" Height="62" Content="启动所选版本" Style="{StaticResource AccentButtonStyle}" FontSize="16"/></Grid>
               </Grid>
             </Border>
           </Grid>
@@ -153,8 +168,10 @@ if(-not(Test-Path -LiteralPath $script:Manager -PathType Leaf)){
 
 $reader = New-Object System.Xml.XmlNodeReader $xaml
 $window = [Windows.Markup.XamlReader]::Load($reader)
+$iconPath=Join-Path $script:AppRoot 'assets\pz-freezer-icon.ico'
+if(Test-Path -LiteralPath $iconPath -PathType Leaf){$window.Icon=[Windows.Media.Imaging.BitmapFrame]::Create((New-Object Uri([IO.Path]::GetFullPath($iconPath),[UriKind]::Absolute)))}
 $names = @('StatusText','MainTabs','GamePathBox','WorkshopPathBox','CachePathBox','RootPathBox','DetectButton',
-    'BrowseGameButton','BrowseWorkshopButton','BrowseCacheButton','LaunchButton','VerifyButton','OpenSelectedProfileButton','AddLibraryRootButton','SelectedVersionTitleText','ProfileDetailsText','LibrarySummaryText',
+    'BrowseGameButton','BrowseWorkshopButton','BrowseCacheButton','LaunchButton','VerifyButton','OpenSelectedProfileButton','AddLibraryRootButton','ProfileFlyout','ProfileFlyoutBackdrop','CloseProfileFlyoutButton','SelectedVersionTitleText','ProfileDetailsText','LibrarySummaryText',
     'OperationModeBox','MigrationModePanel','MigrationDecisionText','BackupModePanel','SaveProfileBox','RefreshSavesButton','BackupDestinationBox','BrowseBackupDestinationButton',
     'BackupButton','MigrationPreviewButton','MigrateButton','RollbackMigrationButton','BrowseTargetProfileButton','InspectTargetButton','TargetProfileBox','ProfilesBox','UseProfileButton','RefreshButton','StepText','NextStepText','LogBox','BusyBar','OpenButton','OpenDocsButton')
 foreach($name in $names){Set-Variable -Name $name -Value $window.FindName($name) -Scope Script}
@@ -210,6 +227,7 @@ function Show-HelpWindow {
     $content=$content -replace '(?m)^#{1,6}\s*','' -replace '`([^`]+)`','$1' -replace '\[([^\]]+)\]\([^\)]+\)','$1'
     $help=New-Object Windows.Window
     $help.Title='PZ Version & Mod Freezer - 使用说明'
+    $help.Icon=$window.Icon
     $help.Width=820;$help.Height=680;$help.MinWidth=620;$help.MinHeight=480;$help.WindowStartupLocation='CenterOwner';$help.Owner=$window
     $box=New-Object Windows.Controls.TextBox
     $box.Text=$content;$box.IsReadOnly=$true;$box.AcceptsReturn=$true;$box.TextWrapping='Wrap'
@@ -225,7 +243,7 @@ function Set-Busy([bool]$Busy,[string]$Text){
     foreach($control in @($ProfilesBox,$DetectButton,$LaunchButton,$VerifyButton,$OpenSelectedProfileButton,$AddLibraryRootButton,$BackupButton,$MigrationPreviewButton,$MigrateButton,$RollbackMigrationButton,$BrowseTargetProfileButton,$InspectTargetButton,$UseProfileButton,$RefreshButton,$OperationModeBox,$RefreshSavesButton,$BrowseBackupDestinationButton)){
         $control.IsEnabled=-not $Busy
     }
-    if(-not $Busy -and $ProfilesBox.SelectedItem -and $ProfilesBox.SelectedItem.IsSteam){$UseProfileButton.IsEnabled=$false}
+    if(-not $Busy -and $ProfilesBox.SelectedItem -and ($ProfilesBox.SelectedItem.IsSteam -or (Test-IsCurrentFrozenItem $ProfilesBox.SelectedItem))){$UseProfileButton.IsEnabled=$false}
 }
 
 function Quote-Display([string]$Path){if($Path){'"'+$Path+'"'}else{'（未检测到）'}}
@@ -448,7 +466,7 @@ function New-VersionLibraryItem($Config,[string]$ConfigPath){
     [pscustomobject]@{
         Display=('B{0} · Build {1} · {2} MOD · {3}' -f $Config.Version,$Config.BuildID,$mods,$health)
         ConfigPath=$ConfigPath;FreezeRoot=[string]$Config.FreezeRoot;GamePath=[string]$Config.GamePath;CachePath=[string]$Config.CachePath
-        Version=[string]$Config.Version;BuildID=[string]$Config.BuildID;Created=$created;ModCount=$mods;Healthy=$healthy;Health=$health;Issues=@($issues);IsSteam=$false;Detected=$true;SortPriority=0
+        Version=[string]$Config.Version;BuildID=[string]$Config.BuildID;Created=$created;ModCount=$mods;Healthy=$healthy;Health=$health;Issues=@($issues);IsSteam=$false;Detected=$true;IsCurrent=$false;SortPriority=0
     }
 }
 
@@ -456,14 +474,14 @@ function New-SteamVersionItem {
     $envInfo=Get-DetectedSteamVersion -Refresh
     if(-not $envInfo){
         $reason=if($script:SteamDetectionError){$script:SteamDetectionError}else{'未检测到 Steam 管理的 Project Zomboid。'}
-        return [pscustomobject]@{Display='Steam 原版 · 未检测到';ConfigPath=$null;FreezeRoot=$null;GamePath=$null;CachePath=$null;WorkshopPath=$null;Version='未知';BuildID='未知';Created=[datetime]::MaxValue;ModCount=0;Healthy=$false;Health='未检测到';Issues=@($reason);IsSteam=$true;Detected=$false;SortPriority=100}
+        return [pscustomobject]@{Display='Steam 原版 · 未检测到';ConfigPath=$null;FreezeRoot=$null;GamePath=$null;CachePath=$null;WorkshopPath=$null;Version='未知';BuildID='未知';Created=[datetime]::MaxValue;ModCount=0;Healthy=$false;Health='未检测到';Issues=@($reason);IsSteam=$true;Detected=$false;IsCurrent=$false;SortPriority=100}
     }
     $projects=0
     if($envInfo.WorkshopExists -and (Test-Path -LiteralPath $envInfo.Workshop -PathType Container)){$projects=@(Get-ChildItem -LiteralPath $envInfo.Workshop -Directory -ErrorAction SilentlyContinue).Count}
     [pscustomobject]@{
         Display=('Steam 原版 · B{0} · Build {1} · 已检测' -f $envInfo.Version,$envInfo.BuildID)
         ConfigPath=$null;FreezeRoot=$null;GamePath=[string]$envInfo.Game;CachePath=[string]$envInfo.Cache;WorkshopPath=[string]$envInfo.Workshop
-        Version=[string]$envInfo.Version;BuildID=[string]$envInfo.BuildID;Created=[datetime]::MaxValue;ModCount=$projects;Healthy=$true;Health='Steam 管理';Issues=@();IsSteam=$true;Detected=$true;SortPriority=100
+        Version=[string]$envInfo.Version;BuildID=[string]$envInfo.BuildID;Created=[datetime]::MaxValue;ModCount=$projects;Healthy=$true;Health='Steam 管理';Issues=@();IsSteam=$true;Detected=$true;IsCurrent=$false;SortPriority=100
     }
 }
 
@@ -475,6 +493,24 @@ function Read-VersionConfigForLibrary([string]$ConfigPath){
         $cfg.ManifestPath=Join-Path $profileRoot 'manifests';$cfg.ReportPath=Join-Path $profileRoot 'reports';$cfg.BackupPath=Join-Path $profileRoot 'backups'
     }
     $cfg
+}
+
+function Show-ProfileFlyout {
+    $ProfileFlyoutBackdrop.Visibility='Visible';$ProfileFlyout.Visibility='Visible'
+}
+
+function Hide-ProfileFlyout {
+    $ProfileFlyout.Visibility='Collapsed';$ProfileFlyoutBackdrop.Visibility='Collapsed'
+    $script:SuppressProfileFlyout=$true
+    try{$ProfilesBox.SelectedIndex=-1}finally{$script:SuppressProfileFlyout=$false}
+}
+
+function Test-IsCurrentFrozenItem($Item){
+    if(-not $Item -or $Item.IsSteam){return $false}
+    if($Item.IsCurrent){return $true}
+    $currentPath=Join-Path $script:AppRoot 'current-freeze.json'
+    if(-not(Test-Path -LiteralPath $currentPath -PathType Leaf)){return $false}
+    try{$current=Get-Content -LiteralPath $currentPath -Raw|ConvertFrom-Json;return $current.FreezeRoot -ieq $Item.FreezeRoot}catch{return $false}
 }
 
 function Update-SelectedProfileDetails {
@@ -493,7 +529,8 @@ function Update-SelectedProfileDetails {
         $LaunchButton.Content=if($item.Detected){'通过 Steam 启动'}else{'Steam 原版未检测到'}
         return
     }
-    $UseProfileButton.Content='设为当前';$UseProfileButton.IsEnabled=$true;$LaunchButton.Content='启动所选版本'
+    if(Test-IsCurrentFrozenItem $item){$UseProfileButton.Content='当前版本';$UseProfileButton.IsEnabled=$false}else{$UseProfileButton.Content='设为当前';$UseProfileButton.IsEnabled=$true}
+    $LaunchButton.Content='启动所选版本'
     $created=if($item.Created -and $item.Created -ne [datetime]::MinValue){$item.Created.ToString('yyyy-MM-dd HH:mm')}else{'未知'}
     $problem=if($item.Healthy){'无'}else{($item.Issues -join '；')}
     $SelectedVersionTitleText.Text=("Build {0}" -f $item.Version)
@@ -521,14 +558,14 @@ function Refresh-Profiles {
             if(-not $seen.ContainsKey($key)){$items.Add((New-VersionLibraryItem $cfg $currentPath));$seen[$key]=$true}
         }catch{Add-Log "[警告] 当前版本配置不可用：$($_.Exception.Message)"}
     }
-    $selected=-1
     foreach($item in @($items|Sort-Object -Property @{Expression='SortPriority';Descending=$true},@{Expression='Created';Descending=$true},@{Expression='Version';Descending=$true})){
+        if(-not $item.IsSteam -and $current -and $current.FreezeRoot -ieq $item.FreezeRoot){$item.IsCurrent=$true;$item.Display="$($item.Display) · 当前"}
         [void]$ProfilesBox.Items.Add($item)
-        if(-not $item.IsSteam -and $current -and $current.FreezeRoot -ieq $item.FreezeRoot){$selected=$ProfilesBox.Items.Count-1}
     }
     if($current){$TargetProfileBox.Text=$current.FreezeRoot;$script:TargetMode='Incremental';$MigrationDecisionText.Text='迁移方式：增量迁移（当前已有冻结版本）。'}
     elseif(-not $TargetProfileBox.Text -or $TargetProfileBox.Text -eq '尚未选择迁移目标'){$TargetProfileBox.Text='尚未选择迁移目标';$script:TargetMode='Unknown'}
-    if($ProfilesBox.Items.Count -gt 0){$ProfilesBox.SelectedIndex=if($selected -ge 0){$selected}else{0}}else{$ProfilesBox.SelectedIndex=-1}
+    $script:SuppressProfileFlyout=$true
+    try{$ProfilesBox.SelectedIndex=-1;$ProfileFlyout.Visibility='Collapsed';$ProfileFlyoutBackdrop.Visibility='Collapsed'}finally{$script:SuppressProfileFlyout=$false}
     $frozenCount=@($items|Where-Object{-not $_.IsSteam}).Count
     $steamSummary=if($steamItem.Detected){'Steam 原版已检测'}else{'Steam 原版未检测到'}
     $LibrarySummaryText.Text=("{0}；已扫描 {1} 个目录，发现 {2} 个冻结版本。" -f $steamSummary,$roots.Count,$frozenCount)
@@ -544,6 +581,10 @@ function Use-SelectedProfile {
         $cfg=Get-Content -LiteralPath $item.ConfigPath -Raw|ConvertFrom-Json
         if($item.ConfigPath -like '*\metadata\freeze.json'){$cfg=Get-FrozenConfigFromFolder (Split-Path -Parent (Split-Path -Parent $item.ConfigPath))}
         [void](Set-CurrentFrozenConfig $cfg $item.Display)
+        foreach($profile in @($ProfilesBox.Items)){
+            if(-not $profile.IsSteam){$profile.IsCurrent=$profile.FreezeRoot -ieq $item.FreezeRoot;$profile.Display=($profile.Display -replace ' · 当前$','');if($profile.IsCurrent){$profile.Display="$($profile.Display) · 当前"}}
+        }
+        $ProfilesBox.Items.Refresh();$UseProfileButton.Content='当前版本';$UseProfileButton.IsEnabled=$false
         return $true
     }catch{
         Add-Log "[失败] 无法切换冻结版本：$($_.Exception.Message)"
@@ -689,7 +730,10 @@ $RefreshSavesButton.Add_Click({Refresh-Saves})
 $BrowseBackupDestinationButton.Add_Click({Select-Folder $BackupDestinationBox '选择存档 ZIP 的外部保存位置'})
 $RefreshButton.Add_Click({Refresh-Profiles})
 $UseProfileButton.Add_Click({Use-SelectedProfile})
-$ProfilesBox.Add_SelectionChanged({Update-SelectedProfileDetails})
+$ProfilesBox.Add_SelectionChanged({if(-not $script:SuppressProfileFlyout -and $ProfilesBox.SelectedItem){Update-SelectedProfileDetails;Show-ProfileFlyout}})
+$CloseProfileFlyoutButton.Add_Click({Hide-ProfileFlyout})
+$ProfileFlyoutBackdrop.Add_MouseLeftButtonUp({Hide-ProfileFlyout})
+$MainTabs.Add_SelectionChanged({if($MainTabs.SelectedIndex -ne 0 -and $ProfileFlyout.Visibility -eq 'Visible'){Hide-ProfileFlyout}})
 $OpenButton.Add_Click({Start-Process explorer.exe -ArgumentList $script:AppRoot})
 $OpenDocsButton.Add_Click({
     Show-HelpWindow
@@ -704,12 +748,13 @@ $window.Add_Closing({param($sender,$e)
 Refresh-Profiles
 Update-OperationMode
 if($SelfTest){
-    if(-not $window -or -not $MainTabs -or $MainTabs.Items.Count -ne 2 -or -not $MigrateButton -or -not $LogBox -or -not $ProfilesBox -or -not $SelectedVersionTitleText -or -not $ProfileDetailsText -or -not $OperationModeBox -or -not $BackupModePanel){throw 'GUI 控件初始化失败。'}
+    if(-not $window -or -not $window.Icon -or -not $MainTabs -or $MainTabs.Items.Count -ne 2 -or -not $MigrateButton -or -not $LogBox -or -not $ProfilesBox -or -not $ProfileFlyout -or -not $SelectedVersionTitleText -or -not $ProfileDetailsText -or -not $OperationModeBox -or -not $BackupModePanel){throw 'GUI 控件初始化失败。'}
+    'WINDOW_ICON_PASS'
     "TAB_LAYOUT_PASS=$($MainTabs.Items.Count)"
     $selfTestSteamItems=@($ProfilesBox.Items|Where-Object{$_.IsSteam});$selfTestFrozenItems=@($ProfilesBox.Items|Where-Object{-not $_.IsSteam})
     if($SelfTestExpectedSteamEntry){if($selfTestSteamItems.Count -ne 1){throw "Expected one Steam entry but found $($selfTestSteamItems.Count)."};"STEAM_ENTRY_PASS=$($selfTestSteamItems[0].Health)"}
     if($SelfTestExpectedProfileCount -ge 0){if($selfTestFrozenItems.Count -ne $SelfTestExpectedProfileCount){throw "Expected $SelfTestExpectedProfileCount frozen profiles but found $($selfTestFrozenItems.Count)."};"LIBRARY_COUNT_PASS=$($selfTestFrozenItems.Count)"}
-    if($SelfTestSelectFirstProfile){$testIndex=-1;for($i=0;$i-lt$ProfilesBox.Items.Count;$i++){if(-not $ProfilesBox.Items[$i].IsSteam -and $ProfilesBox.Items[$i].Healthy){$testIndex=$i;break}};if($testIndex -lt 0){throw 'No healthy frozen profile was available for selection self-test.'};$ProfilesBox.SelectedIndex=$testIndex;$expectedRoot=$ProfilesBox.SelectedItem.FreezeRoot;if(-not(Use-SelectedProfile)){throw 'Library selection self-test failed.'};$selectedConfig=Get-Content -LiteralPath (Join-Path $script:AppRoot 'current-freeze.json') -Raw|ConvertFrom-Json;if($selectedConfig.FreezeRoot -ine $expectedRoot){throw 'Selected profile was not written as current.'};"LIBRARY_SELECTION_PASS=$expectedRoot"}
+    if($SelfTestSelectFirstProfile){$testIndex=-1;for($i=0;$i-lt$ProfilesBox.Items.Count;$i++){if(-not $ProfilesBox.Items[$i].IsSteam -and $ProfilesBox.Items[$i].Healthy){$testIndex=$i;break}};if($testIndex -lt 0){throw 'No healthy frozen profile was available for selection self-test.'};$ProfilesBox.SelectedIndex=$testIndex;$expectedRoot=$ProfilesBox.SelectedItem.FreezeRoot;if(-not(Use-SelectedProfile)){throw 'Library selection self-test failed.'};$selectedConfig=Get-Content -LiteralPath (Join-Path $script:AppRoot 'current-freeze.json') -Raw|ConvertFrom-Json;if($selectedConfig.FreezeRoot -ine $expectedRoot){throw 'Selected profile was not written as current.'};if($UseProfileButton.Content -ne '当前版本' -or $UseProfileButton.IsEnabled){throw 'Current-version button state was not updated.'};"LIBRARY_SELECTION_PASS=$expectedRoot";'CURRENT_BUTTON_PASS'}
     if($SelfTestProfilePath){
         $testConfig=Get-FrozenConfigFromFolder $SelfTestProfilePath
         if(-not $testConfig.FreezeRoot -or -not $testConfig.GamePath -or -not $testConfig.CachePath){throw '冻结位置解析自检失败。'}
@@ -722,6 +767,7 @@ if($SelfTest){
         elseif(-not $targetResult){throw 'Target inspection self-test failed.'}
         "TARGET_MODE_PASS=$script:TargetMode"
     }
+    if($SelfTestOpenFirstProfileFlyout -and $ProfilesBox.Items.Count -gt 0){$ProfilesBox.SelectedIndex=0;if($ProfileFlyout.Visibility -ne 'Visible'){throw 'Profile flyout did not open.'};'PROFILE_FLYOUT_PASS'}
     if($SelfTestScreenshotPath){
         $MainTabs.SelectedIndex=if($SelfTestTab -eq 'Migration'){1}else{0}
         $OperationModeBox.SelectedIndex=@{Migration=0;Backup=1}[$SelfTestMode];Update-OperationMode
