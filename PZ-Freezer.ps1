@@ -1,5 +1,5 @@
 ﻿[CmdletBinding()]
-param([switch]$SelfTest)
+param([switch]$SelfTest,[string]$SelfTestProfilePath)
 
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
@@ -73,7 +73,7 @@ if(-not(Test-Path -LiteralPath $script:Manager -PathType Leaf)){
     <GroupBox Grid.Row="2" Header="2. 创建与管理冻结版本">
       <Grid>
         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <StackPanel Grid.Row="0" Orientation="Horizontal">
           <Button x:Name="CreateButton" Content="一键创建冻结版本" Background="#2F9E72" Foreground="White" FontWeight="SemiBold"/>
           <Button x:Name="PreflightButton" Content="只做预检"/>
@@ -92,6 +92,11 @@ if(-not(Test-Path -LiteralPath $script:Manager -PathType Leaf)){
           <Button x:Name="RollbackMigrationButton" Content="回迁最近一次"/>
           <TextBlock Text="只补齐缺失文件与缺失 Mod ID；已有文件不覆盖" VerticalAlignment="Center" Foreground="#596773" Margin="12,0,0,0"/>
         </StackPanel>
+        <DockPanel Grid.Row="2" Grid.ColumnSpan="2" Margin="4,5,4,0">
+          <TextBlock Text="当前冻结目标：" VerticalAlignment="Center" FontWeight="SemiBold"/>
+          <Button x:Name="BrowseTargetProfileButton" Content="选择冻结位置" DockPanel.Dock="Right"/>
+          <TextBox x:Name="TargetProfileBox" IsReadOnly="True" Background="#EEF1F4" VerticalContentAlignment="Center"/>
+        </DockPanel>
       </Grid>
     </GroupBox>
 
@@ -119,7 +124,7 @@ $reader = New-Object System.Xml.XmlNodeReader $xaml
 $window = [Windows.Markup.XamlReader]::Load($reader)
 $names = @('StatusText','GamePathBox','WorkshopPathBox','CachePathBox','RootPathBox','DetectButton',
     'BrowseGameButton','BrowseWorkshopButton','BrowseCacheButton','CreateButton','PreflightButton','LaunchButton','VerifyButton',
-    'BackupButton','MigrationPreviewButton','MigrateButton','RollbackMigrationButton','ProfilesBox','UseProfileButton','RefreshButton','LogBox','BusyBar','OpenButton','OpenDocsButton')
+    'BackupButton','MigrationPreviewButton','MigrateButton','RollbackMigrationButton','BrowseTargetProfileButton','TargetProfileBox','ProfilesBox','UseProfileButton','RefreshButton','LogBox','BusyBar','OpenButton','OpenDocsButton')
 foreach($name in $names){Set-Variable -Name $name -Value $window.FindName($name) -Scope Script}
 $RootPathBox.Text = $script:AppRoot
 
@@ -133,7 +138,7 @@ function Set-Busy([bool]$Busy,[string]$Text){
     $BusyBar.IsIndeterminate=$Busy
     $BusyBar.Visibility=if($Busy){'Visible'}else{'Hidden'}
     $StatusText.Text=$Text
-    foreach($control in @($DetectButton,$CreateButton,$PreflightButton,$LaunchButton,$VerifyButton,$BackupButton,$MigrationPreviewButton,$MigrateButton,$RollbackMigrationButton,$UseProfileButton,$RefreshButton)){
+    foreach($control in @($DetectButton,$CreateButton,$PreflightButton,$LaunchButton,$VerifyButton,$BackupButton,$MigrationPreviewButton,$MigrateButton,$RollbackMigrationButton,$BrowseTargetProfileButton,$UseProfileButton,$RefreshButton)){
         $control.IsEnabled=-not $Busy
     }
 }
@@ -167,32 +172,102 @@ function Select-Folder([System.Windows.Controls.TextBox]$Target,[string]$Descrip
     $dialog.Dispose()
 }
 
+function Get-FrozenConfigFromFolder([string]$Folder){
+    $folderFull=[IO.Path]::GetFullPath($Folder).TrimEnd('\')
+    if(-not(Test-Path -LiteralPath $folderFull -PathType Container)){throw "目录不存在：$folderFull"}
+    $managerConfig=Join-Path $folderFull 'current-freeze.json'
+    $profileConfig=Join-Path $folderFull 'metadata\freeze.json'
+    $configPath=$null;$selectedProfileRoot=$null
+    if(Test-Path -LiteralPath $managerConfig -PathType Leaf){$configPath=$managerConfig}
+    elseif(Test-Path -LiteralPath $profileConfig -PathType Leaf){$configPath=$profileConfig;$selectedProfileRoot=$folderFull}
+    else{
+        $candidates=@(Get-ChildItem -LiteralPath $folderFull -Directory -ErrorAction SilentlyContinue|ForEach-Object{
+            $candidate=Join-Path $_.FullName 'metadata\freeze.json'
+            if(Test-Path -LiteralPath $candidate -PathType Leaf){Get-Item -LiteralPath $candidate}
+        })
+        if($candidates.Count -eq 1){$configPath=$candidates[0].FullName;$selectedProfileRoot=Split-Path -Parent (Split-Path -Parent $configPath)}
+        elseif($candidates.Count -gt 1){throw '该目录包含多个冻结版本，请进入并选择具体版本目录。'}
+        else{throw '所选目录中没有 current-freeze.json 或 metadata\freeze.json。'}
+    }
+    $cfg=Get-Content -LiteralPath $configPath -Raw|ConvertFrom-Json
+    if($selectedProfileRoot){
+        $cfg.FreezeRoot=$selectedProfileRoot
+        $cfg.GamePath=Join-Path $selectedProfileRoot 'game';$cfg.CachePath=Join-Path $selectedProfileRoot 'cache'
+        $cfg.ManifestPath=Join-Path $selectedProfileRoot 'manifests';$cfg.ReportPath=Join-Path $selectedProfileRoot 'reports';$cfg.BackupPath=Join-Path $selectedProfileRoot 'backups'
+    }
+    if(-not(Test-Path -LiteralPath $cfg.FreezeRoot -PathType Container)){throw "配置指向的冻结目录不存在：$($cfg.FreezeRoot)"}
+    if(-not(Test-Path -LiteralPath $cfg.GamePath -PathType Container)){throw "冻结游戏目录不存在：$($cfg.GamePath)"}
+    if(-not(Test-Path -LiteralPath $cfg.CachePath -PathType Container)){throw "冻结缓存目录不存在：$($cfg.CachePath)"}
+    $cfg.ManagerRoot=$script:AppRoot
+    $cfg
+}
+
+function Set-CurrentFrozenConfig($Config,[string]$Label){
+    $Config.ManagerRoot=$script:AppRoot
+    $Config|ConvertTo-Json -Depth 15|Set-Content -LiteralPath (Join-Path $script:AppRoot 'current-freeze.json') -Encoding UTF8
+    $TargetProfileBox.Text=$Config.FreezeRoot
+    Add-Log "[通过] 当前冻结目标：$($Config.FreezeRoot)"
+    if($Label){Add-Log "        $Label"}
+    $StatusText.Text='已选择冻结目标'
+}
+
+function Select-ExternalFrozenProfile {
+    $dialog=New-Object System.Windows.Forms.FolderBrowserDialog
+    $dialog.Description='选择包含 current-freeze.json 的管理器目录，或包含 game/cache/metadata 的具体冻结版本目录'
+    $dialog.ShowNewFolderButton=$false
+    if(Test-Path -LiteralPath $TargetProfileBox.Text -PathType Container){$dialog.SelectedPath=$TargetProfileBox.Text}
+    try{
+        if($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){
+            $cfg=Get-FrozenConfigFromFolder $dialog.SelectedPath
+            Set-CurrentFrozenConfig $cfg ('版本 {0} · BuildID {1}' -f $cfg.Version,$cfg.BuildID)
+            Refresh-Profiles
+        }
+    }catch{
+        Add-Log "[失败] 无法选择冻结位置：$($_.Exception.Message)"
+        [System.Windows.MessageBox]::Show($_.Exception.Message,'无法选择冻结位置','OK','Error')|Out-Null
+    }finally{$dialog.Dispose()}
+}
+
 function Refresh-Profiles {
     $ProfilesBox.Items.Clear()
     $profileRoot=Join-Path $script:AppRoot 'profiles'
-    if(-not(Test-Path -LiteralPath $profileRoot)){return}
     $currentPath=Join-Path $script:AppRoot 'current-freeze.json'
     $current=if(Test-Path -LiteralPath $currentPath){Get-Content -LiteralPath $currentPath -Raw|ConvertFrom-Json}else{$null}
+    $seen=@{}
     $selected=-1
-    foreach($file in @(Get-ChildItem -LiteralPath $profileRoot -Filter freeze.json -File -Recurse -ErrorAction SilentlyContinue|Sort-Object LastWriteTime -Descending)){
-        try{
-            $cfg=Get-Content -LiteralPath $file.FullName -Raw|ConvertFrom-Json
-            $item=[pscustomobject]@{Display=("{0} · build {1} · {2}" -f $cfg.Version,$cfg.BuildID,([datetime]$cfg.Created).ToString('yyyy-MM-dd HH:mm'));ConfigPath=$file.FullName;FreezeRoot=$cfg.FreezeRoot}
-            [void]$ProfilesBox.Items.Add($item)
-            if($current -and $current.FreezeRoot -ieq $cfg.FreezeRoot){$selected=$ProfilesBox.Items.Count-1}
-        }catch{Add-Log "[警告] 无法读取配置：$($file.FullName)"}
+    if(Test-Path -LiteralPath $profileRoot -PathType Container){
+        foreach($file in @(Get-ChildItem -LiteralPath $profileRoot -Filter freeze.json -File -Recurse -ErrorAction SilentlyContinue|Sort-Object LastWriteTime -Descending)){
+            try{
+                $cfg=Get-Content -LiteralPath $file.FullName -Raw|ConvertFrom-Json
+                $item=[pscustomobject]@{Display=("{0} · build {1} · {2}" -f $cfg.Version,$cfg.BuildID,([datetime]$cfg.Created).ToString('yyyy-MM-dd HH:mm'));ConfigPath=$file.FullName;FreezeRoot=$cfg.FreezeRoot}
+                [void]$ProfilesBox.Items.Add($item);$seen[$cfg.FreezeRoot.ToLowerInvariant()]=$true
+                if($current -and $current.FreezeRoot -ieq $cfg.FreezeRoot){$selected=$ProfilesBox.Items.Count-1}
+            }catch{Add-Log "[警告] 无法读取配置：$($file.FullName)"}
+        }
     }
+    if($current){
+        $TargetProfileBox.Text=$current.FreezeRoot
+        $key=$current.FreezeRoot.ToLowerInvariant()
+        if(-not $seen.ContainsKey($key)){
+            $item=[pscustomobject]@{Display=("[外部] {0} · build {1}" -f $current.Version,$current.BuildID);ConfigPath=$currentPath;FreezeRoot=$current.FreezeRoot}
+            [void]$ProfilesBox.Items.Add($item);$selected=$ProfilesBox.Items.Count-1
+        }
+    }else{$TargetProfileBox.Text='尚未选择冻结版本'}
     if($ProfilesBox.Items.Count -gt 0){$ProfilesBox.SelectedIndex=if($selected -ge 0){$selected}else{0}}
+    else{$ProfilesBox.SelectedIndex=-1}
 }
 
 function Use-SelectedProfile {
     $item=$ProfilesBox.SelectedItem
-    if(-not $item){[System.Windows.MessageBox]::Show('请先选择一个冻结版本。','PZ Freezer')|Out-Null;return}
-    $cfg=Get-Content -LiteralPath $item.ConfigPath -Raw|ConvertFrom-Json
-    $cfg.ManagerRoot=$script:AppRoot
-    $cfg|ConvertTo-Json -Depth 15|Set-Content -LiteralPath (Join-Path $script:AppRoot 'current-freeze.json') -Encoding UTF8
-    Add-Log "[通过] 当前冻结版本已切换为：$($item.Display)"
-    $StatusText.Text='已切换版本'
+    if(-not $item){[System.Windows.MessageBox]::Show('请先选择一个冻结版本，或点击“选择冻结位置”。','PZ Freezer')|Out-Null;return}
+    try{
+        $cfg=Get-Content -LiteralPath $item.ConfigPath -Raw|ConvertFrom-Json
+        if($item.ConfigPath -like '*\metadata\freeze.json'){$cfg=Get-FrozenConfigFromFolder (Split-Path -Parent (Split-Path -Parent $item.ConfigPath))}
+        Set-CurrentFrozenConfig $cfg $item.Display
+    }catch{
+        Add-Log "[失败] 无法切换冻结版本：$($_.Exception.Message)"
+        [System.Windows.MessageBox]::Show($_.Exception.Message,'无法切换冻结版本','OK','Error')|Out-Null
+    }
 }
 
 function Start-ManagerAction([string]$Action){
@@ -261,6 +336,7 @@ $PreflightButton.Add_Click({Start-ManagerAction 'Preflight'})
 $MigrationPreviewButton.Add_Click({Start-ManagerAction 'PreviewMigration'})
 $MigrateButton.Add_Click({Start-ManagerAction 'Migrate'})
 $RollbackMigrationButton.Add_Click({Start-ManagerAction 'RollbackMigration'})
+$BrowseTargetProfileButton.Add_Click({Select-ExternalFrozenProfile})
 $LaunchButton.Add_Click({Start-ManagerAction 'Launch'})
 $VerifyButton.Add_Click({Start-ManagerAction 'Verify'})
 $BackupButton.Add_Click({Start-ManagerAction 'BackupSave'})
@@ -281,6 +357,11 @@ $window.Add_Closing({param($sender,$e)
 Refresh-Profiles
 if($SelfTest){
     if(-not $window -or -not $CreateButton -or -not $LogBox){throw 'GUI 控件初始化失败。'}
+    if($SelfTestProfilePath){
+        $testConfig=Get-FrozenConfigFromFolder $SelfTestProfilePath
+        if(-not $testConfig.FreezeRoot -or -not $testConfig.GamePath -or -not $testConfig.CachePath){throw '冻结位置解析自检失败。'}
+        "PROFILE_RESOLVE_PASS=$($testConfig.FreezeRoot)"
+    }
     'GUI_SELF_TEST_PASS'
     return
 }

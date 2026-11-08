@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1-preview - 2026-11-08
+
+- Added a visible current frozen-target path in the WPF interface.
+- Added folder selection for an existing external manager root or frozen profile.
+- Added automatic rebasing when a frozen profile was moved to a new location.
+- Added detection of a single profile inside a selected parent directory.
+- Added an ambiguity guard when a directory contains multiple profiles.
+- Added external profiles to the version selector.
+
 ## 0.2.0-preview - 2026-11-08
 
 - Added fast migration preview using path existence and file-size comparison.
