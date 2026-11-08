@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0-preview - 2026-11-08
+
+- Added a one-click Windows EXE launcher with an original project icon.
+- Added in-app documentation so the GUI no longer opens README.md through a file association.
+- Added user-facing current-step, next-step, elapsed-time, success and error-reason reporting.
+- Filtered raw Robocopy and JSON output from the GUI operation log.
+- Removed the automatic full save ZIP from incremental MOD migration; manual save backup remains available.
+- Kept lightweight rollback metadata and SHA-256 records for every newly migrated file.
+- Made failed integrity verification return a failed operation state in the GUI.
+
 ## 0.2.1-preview - 2026-11-08
 
 - Added a visible current frozen-target path in the WPF interface.
@@ -15,7 +25,7 @@
 - Added missing-only game file repair for exact matching game version/BuildID.
 - Added missing Workshop Mod ID import into an existing frozen profile.
 - Added duplicate Mod ID and dependency guards.
-- Added automatic save backup before migration.
+- Added migration-time save backup (removed in 0.3.0 after real-world performance testing).
 - Added transaction records and safe rollback of the latest migration.
 - Added incremental SHA-256 baseline updates for newly transferred files only.
 - Added WPF controls for preview, migration and rollback.

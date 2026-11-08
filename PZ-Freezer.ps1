@@ -100,11 +100,18 @@ if(-not(Test-Path -LiteralPath $script:Manager -PathType Leaf)){
       </Grid>
     </GroupBox>
 
-    <GroupBox Grid.Row="3" Header="运行日志">
+    <GroupBox Grid.Row="3" Header="操作进度与结果">
       <Grid>
-        <TextBox x:Name="LogBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+        <Border Grid.Row="0" Background="#EAF2F8" CornerRadius="6" Padding="12,9" Margin="4,2,4,8">
+          <StackPanel>
+            <TextBlock x:Name="StepText" Text="当前：等待操作" FontWeight="SemiBold" Foreground="#243447" FontSize="14"/>
+            <TextBlock x:Name="NextStepText" Text="下一步：选择要执行的操作" Foreground="#596773" Margin="0,4,0,0"/>
+          </StackPanel>
+        </Border>
+        <TextBox Grid.Row="1" x:Name="LogBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
                  VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-                 FontFamily="Consolas, Microsoft YaHei UI" FontSize="13" Background="#101820" Foreground="#D8E3EA"/>
+                 FontFamily="Microsoft YaHei UI" FontSize="13" Background="#101820" Foreground="#D8E3EA"/>
       </Grid>
     </GroupBox>
 
@@ -113,7 +120,7 @@ if(-not(Test-Path -LiteralPath $script:Manager -PathType Leaf)){
       <ProgressBar x:Name="BusyBar" Height="7" IsIndeterminate="False" Visibility="Hidden"/>
       <StackPanel Grid.Column="1" Orientation="Horizontal">
         <Button x:Name="OpenButton" Content="打开工具目录"/>
-        <Button x:Name="OpenDocsButton" Content="使用说明"/>
+        <Button x:Name="OpenDocsButton" Content="应用内说明"/>
       </StackPanel>
     </Grid>
   </Grid>
@@ -124,7 +131,7 @@ $reader = New-Object System.Xml.XmlNodeReader $xaml
 $window = [Windows.Markup.XamlReader]::Load($reader)
 $names = @('StatusText','GamePathBox','WorkshopPathBox','CachePathBox','RootPathBox','DetectButton',
     'BrowseGameButton','BrowseWorkshopButton','BrowseCacheButton','CreateButton','PreflightButton','LaunchButton','VerifyButton',
-    'BackupButton','MigrationPreviewButton','MigrateButton','RollbackMigrationButton','BrowseTargetProfileButton','TargetProfileBox','ProfilesBox','UseProfileButton','RefreshButton','LogBox','BusyBar','OpenButton','OpenDocsButton')
+    'BackupButton','MigrationPreviewButton','MigrateButton','RollbackMigrationButton','BrowseTargetProfileButton','TargetProfileBox','ProfilesBox','UseProfileButton','RefreshButton','StepText','NextStepText','LogBox','BusyBar','OpenButton','OpenDocsButton')
 foreach($name in $names){Set-Variable -Name $name -Value $window.FindName($name) -Scope Script}
 $RootPathBox.Text = $script:AppRoot
 
@@ -132,6 +139,57 @@ function Add-Log([string]$Text){
     if([string]::IsNullOrWhiteSpace($Text)){return}
     $LogBox.AppendText("$Text`r`n")
     $LogBox.ScrollToEnd()
+}
+
+function Set-Step([string]$Current,[string]$Next){
+    $StepText.Text="当前：$Current"
+    $NextStepText.Text="下一步：$Next"
+}
+
+function Get-ActionLabel([string]$Action){
+    switch($Action){
+        'Create'{'创建冻结版本'} 'Preflight'{'环境预检'} 'PreviewMigration'{'检查可迁移内容'}
+        'Migrate'{'增量迁移'} 'RollbackMigration'{'回迁最近迁移'} 'Verify'{'完整性校验'}
+        'BackupSave'{'存档备份'} 'Launch'{'启动冻结版'} default{$Action}
+    }
+}
+
+function Handle-JobLine([string]$Line){
+    if([string]::IsNullOrWhiteSpace($Line)){return}
+    if($Line.StartsWith('@@PZSTEP|')){
+        $parts=$Line.Split('|',4)
+        if($parts.Count -ge 3){
+            $detail=if($parts.Count -eq 4){$parts[3]}else{''}
+            Set-Step $parts[1] $parts[2]
+            Add-Log ("[步骤] {0}{1}" -f $parts[1],$(if($detail){" — $detail"}else{''}))
+        }
+        return
+    }
+    if($Line -match '^\[\d{4}-\d{2}-\d{2} .*\] \[(PASS|WARN|ERROR|INFO)\] (.+)$'){
+        $level=switch($Matches[1]){'PASS'{'成功'}'WARN'{'提醒'}'ERROR'{'错误'}default{'信息'}}
+        Add-Log ("[{0}] {1}" -f $level,$Matches[2])
+        if($Matches[1] -eq 'ERROR'){$script:LastErrorReason=$Matches[2]}
+        return
+    }
+    if($Line -match '^(\{|\}|\s*"|\s*\[|\s*\]|\s*[-=]{3,}|\s*Total\s|\s*Dirs\s|\s*Files\s|\s*Bytes\s|\s*Times\s|\s*Ended\s|\s*New File\s)' -or $Line -match '(?i)robocopy') {return}
+    if($Line -match '(?i)(exception|失败|错误|error|不存在|无效|无法|退出码)' -and $Line -notmatch 'CategoryInfo|FullyQualifiedErrorId|RemoteException'){
+        if(-not $script:LastErrorReason){$script:LastErrorReason=$Line.Trim()}
+        Add-Log ("[错误] {0}" -f $Line.Trim())
+    }
+}
+
+function Show-HelpWindow {
+    $doc=Join-Path $script:AppRoot 'README.md'
+    $content=if(Test-Path -LiteralPath $doc){Get-Content -LiteralPath $doc -Raw}else{'未找到内置说明文件。'}
+    $content=$content -replace '(?m)^#{1,6}\s*','' -replace '`([^`]+)`','$1' -replace '\[([^\]]+)\]\([^\)]+\)','$1'
+    $help=New-Object Windows.Window
+    $help.Title='PZ Version & Mod Freezer - 使用说明'
+    $help.Width=820;$help.Height=680;$help.MinWidth=620;$help.MinHeight=480;$help.WindowStartupLocation='CenterOwner';$help.Owner=$window
+    $box=New-Object Windows.Controls.TextBox
+    $box.Text=$content;$box.IsReadOnly=$true;$box.AcceptsReturn=$true;$box.TextWrapping='Wrap'
+    $box.VerticalScrollBarVisibility='Auto';$box.HorizontalScrollBarVisibility='Disabled';$box.Padding='20';$box.FontFamily='Microsoft YaHei UI';$box.FontSize=14
+    $help.Content=$box
+    [void]$help.ShowDialog()
 }
 
 function Set-Busy([bool]$Busy,[string]$Text){
@@ -288,7 +346,7 @@ function Start-ManagerAction([string]$Action){
         if($answer -ne 'Yes'){return}
     }
     if($Action -eq 'Migrate'){
-        $answer=[System.Windows.MessageBox]::Show("当前目标通常已经包含游戏本体和 MOD。`n`n继续后只会补齐缺失文件和缺失 Mod ID，不覆盖已有文件；不会执行全量完整性哈希。工具会先备份存档并保存迁移事务，可用「回迁最近一次」撤回。`n`n确认继续？",'确认增量迁移','YesNo','Warning')
+        $answer=[System.Windows.MessageBox]::Show("当前目标通常已经包含游戏本体和 MOD。`n`n继续后只会补齐缺失文件和缺失 Mod ID，不覆盖已有文件；不会执行全量完整性哈希，也不会压缩整个存档。工具会保存迁移事务，可用「回迁最近一次」撤回。`n`n如需存档快照，请单独点击「备份存档」。`n`n确认继续？",'确认增量迁移','YesNo','Warning')
         if($answer -ne 'Yes'){return}
     }
     if($Action -eq 'RollbackMigration'){
@@ -297,7 +355,10 @@ function Start-ManagerAction([string]$Action){
     }
     $busyText=switch($Action){'Create'{'正在创建'}'Preflight'{'正在预检'}'PreviewMigration'{'正在检查迁移'}'Migrate'{'正在迁移'}'RollbackMigration'{'正在回迁'}'Verify'{'正在校验'}'BackupSave'{'正在备份'}'Launch'{'正在启动'}default{'正在执行'}}
     Set-Busy $true $busyText
-    Add-Log ("[{0}] 开始执行：{1}" -f (Get-Date -Format 'HH:mm:ss'),$Action)
+    $script:ActionStart=Get-Date;$script:CurrentAction=$Action;$script:LastErrorReason=$null
+    $label=Get-ActionLabel $Action
+    Set-Step "准备$label" '读取配置并开始执行'
+    Add-Log ("[{0}] 开始：{1}" -f (Get-Date -Format 'HH:mm:ss'),$label)
     $manager=$script:Manager;$root=$script:AppRoot;$game=$GamePathBox.Text;$workshop=$WorkshopPathBox.Text;$cache=$CachePathBox.Text
     $script:Job=Start-Job -ScriptBlock {
         param($Manager,$ActionName,$Root,$Game,$Workshop,$Cache)
@@ -314,12 +375,22 @@ $JobTimer=New-Object Windows.Threading.DispatcherTimer
 $JobTimer.Interval=[TimeSpan]::FromMilliseconds(600)
 $JobTimer.Add_Tick({
     if(-not $script:Job){return}
-    foreach($line in @(Receive-Job -Job $script:Job -ErrorAction SilentlyContinue)){Add-Log $line.ToString()}
+    foreach($line in @(Receive-Job -Job $script:Job -ErrorAction SilentlyContinue)){Handle-JobLine $line.ToString()}
     if($script:Job.State -in @('Completed','Failed','Stopped')){
         $state=$script:Job.State
-        foreach($line in @(Receive-Job -Job $script:Job -ErrorAction SilentlyContinue)){Add-Log $line.ToString()}
-        if($state -eq 'Completed'){Add-Log '[完成] 操作已结束。';Set-Busy $false '操作完成'}
-        else{Add-Log ("[失败] 后台任务状态：{0}" -f $state);Set-Busy $false '操作失败'}
+        foreach($line in @(Receive-Job -Job $script:Job -ErrorAction SilentlyContinue)){Handle-JobLine $line.ToString()}
+        $elapsed=[Math]::Round(((Get-Date)-$script:ActionStart).TotalSeconds,1)
+        $label=Get-ActionLabel $script:CurrentAction
+        if($state -eq 'Completed'){
+            Add-Log ("[完成] {0}成功，用时 {1} 秒。" -f $label,$elapsed)
+            Set-Step "$label 已完成（$elapsed 秒）" '可以继续选择其它操作'
+            Set-Busy $false '操作成功'
+        }else{
+            $reason=if($script:LastErrorReason){$script:LastErrorReason}else{if($script:Job.JobStateInfo.Reason){$script:Job.JobStateInfo.Reason.Message}else{"后台任务状态：$state"}}
+            Add-Log ("[失败] {0}未完成，用时 {1} 秒。原因：{2}" -f $label,$elapsed,$reason)
+            Set-Step "$label 失败" '根据下方原因处理后重试'
+            Set-Busy $false '操作失败'
+        }
         Remove-Job -Job $script:Job -Force -ErrorAction SilentlyContinue
         $script:Job=$null
         $JobTimer.Stop()
@@ -344,8 +415,7 @@ $RefreshButton.Add_Click({Refresh-Profiles})
 $UseProfileButton.Add_Click({Use-SelectedProfile})
 $OpenButton.Add_Click({Start-Process explorer.exe -ArgumentList $script:AppRoot})
 $OpenDocsButton.Add_Click({
-    $doc=Join-Path $script:AppRoot 'README.md'
-    if(Test-Path -LiteralPath $doc){Start-Process $doc}else{Start-Process explorer.exe -ArgumentList (Join-Path $script:AppRoot 'docs')}
+    Show-HelpWindow
 })
 $window.Add_Closing({param($sender,$e)
     if($script:Job -and $script:Job.State -in @('Running','NotStarted')){

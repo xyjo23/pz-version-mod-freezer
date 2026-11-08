@@ -25,6 +25,13 @@ function Write-ManagerLog {
     if ($script:LogFile) { Add-Content -LiteralPath $script:LogFile -Value $line -Encoding UTF8 }
 }
 
+function Write-StepEvent {
+    param([string]$Current,[string]$Next='完成',[string]$Detail='')
+    $safeCurrent=($Current -replace '[\r\n|]',' ').Trim();$safeNext=($Next -replace '[\r\n|]',' ').Trim();$safeDetail=($Detail -replace '[\r\n|]',' ').Trim()
+    Write-Host ('@@PZSTEP|{0}|{1}|{2}' -f $safeCurrent,$safeNext,$safeDetail)
+    if($script:LogFile){Add-Content -LiteralPath $script:LogFile -Value ('[{0}] [STEP] 当前：{1}；下一步：{2}；{3}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'),$safeCurrent,$safeNext,$safeDetail) -Encoding UTF8}
+}
+
 function Get-SteamInstall {
     $candidates = @(
         (Get-ItemProperty -LiteralPath 'HKCU:\Software\Valve\Steam' -ErrorAction SilentlyContinue).SteamPath,
@@ -428,12 +435,18 @@ function Assert-PathInsideProfile {
 function Invoke-IncrementalMigration {
     param($Config)
     Assert-NoPZProcess
+    Write-StepEvent '扫描来源与冻结目标' '检查兼容性与依赖' '仅比较路径、大小和 Mod ID，不做全量哈希。'
     $plan=Get-MigrationPlan $Config
     if(($plan.TargetHasGame -or $plan.TargetHasMods) -and -not $ConfirmedExistingTarget){throw '目标位置已包含游戏或 MOD。必须由用户明确确认后才能增量迁移。'}
     if($plan.DuplicateMissingModIds.Count -gt 0){throw ('来源中存在重复 Mod ID，无法自动选择：'+($plan.DuplicateMissingModIds -join ', '))}
     if($plan.MissingDependencies.Count -gt 0){throw ('缺少 MOD 依赖：'+($plan.MissingDependencies -join ', '))}
     if(-not $plan.GameBuildCompatible){Write-ManagerLog "Steam 游戏版本/BuildID 与冻结版不同；不会混合游戏文件，只迁移兼容 Mod。" 'WARN'}
-    Invoke-SaveBackup $Config
+    if($plan.GameMissing.Count -eq 0 -and $plan.MissingMods.Count -eq 0){
+        Write-StepEvent '检查完成：没有需要迁移的内容' '完成' '冻结目标已经包含来源中的游戏文件和 Mod ID。'
+        Write-ManagerLog '增量迁移无需执行：没有缺失游戏文件或缺失 MOD。' 'PASS'
+        return
+    }
+    Write-StepEvent '创建可回迁事务' '复制缺失游戏文件' ("计划：游戏文件 {0} 个，MOD {1} 个。" -f $plan.GameMissing.Count,$plan.MissingMods.Count)
     $stamp=Get-TimeStamp;$migrationRoot=Join-Path $Config.FreezeRoot 'migrations';$migrationDir=Join-Path $migrationRoot $stamp
     New-Item -ItemType Directory -Path $migrationDir -Force|Out-Null
     $pointer=Join-Path $migrationRoot 'last-migration.json'
@@ -442,6 +455,7 @@ function Invoke-IncrementalMigration {
     $added=New-Object System.Collections.Generic.List[object]
     $newMaps=New-Object System.Collections.Generic.List[object]
     try{
+        Write-StepEvent '复制缺失游戏文件' '复制缺失 MOD' ("共 {0} 个；已有文件不会覆盖。" -f $plan.GameMissing.Count)
         foreach($relative in @($plan.GameMissing)){
             $source=Join-Path $plan.Environment.Game $relative;$dest=Join-Path $Config.GamePath $relative
             $parent=Split-Path -Parent $dest;if(-not(Test-Path -LiteralPath $parent)){New-Item -ItemType Directory -Path $parent -Force|Out-Null}
@@ -449,6 +463,7 @@ function Invoke-IncrementalMigration {
             $file=Get-Item -LiteralPath $dest
             $added.Add([pscustomobject]@{Category='Game';Path=$file.FullName;RelativePath=$relative;ManifestPath=$relative;Length=[int64]$file.Length;SHA256=(Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash})
         }
+        Write-StepEvent '复制缺失 MOD' '记录新增文件 SHA-256' ("共 {0} 个 Mod ID；已有 Mod ID 不会覆盖。" -f $plan.MissingMods.Count)
         foreach($mod in @($plan.MissingMods)){
             $baseName=('WS{0}__{1}' -f $mod.WorkshopID,($mod.ModFolder -replace '[\\/:*?"<>|]','_'))
             $destName=$baseName;$dest=Join-Path (Join-Path $Config.CachePath 'mods') $destName
@@ -461,6 +476,7 @@ function Invoke-IncrementalMigration {
                 $added.Add([pscustomobject]@{Category='Mod';Path=$file.FullName;RelativePath=$file.FullName.Substring([IO.Path]::GetFullPath($Config.FreezeRoot).TrimEnd('\').Length).TrimStart('\');ManifestPath=(Join-Path $destName $inside);Length=[int64]$file.Length;SHA256=(Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash})
             }
         }
+        Write-StepEvent '更新增量清单' '保存回迁记录' ("正在登记 {0} 个新增文件。" -f $added.Count)
         $gameManifest=Join-Path $Config.ManifestPath 'game.sha256.csv';$gameRows=@();if(Test-Path -LiteralPath $gameManifest){$gameRows=@(Import-Csv -LiteralPath $gameManifest)}
         $gameRows+=@($added|Where-Object Category -eq 'Game'|ForEach-Object{[pscustomobject]@{RelativePath=$_.ManifestPath;Length=$_.Length;SHA256=$_.SHA256}})
         $gameRows|Sort-Object RelativePath -Unique|Export-Csv -LiteralPath $gameManifest -NoTypeInformation -Encoding UTF8
@@ -474,6 +490,7 @@ function Invoke-IncrementalMigration {
         $Config.CopiedModRootCount=@($maps).Count;$Config.EffectiveModCount=@(Get-TargetModIds -ModsRoot (Join-Path $Config.CachePath 'mods') -GameVersion ([version]$Config.Version)).Count
         Write-JsonFile $Config (Join-Path $Config.FreezeRoot 'metadata\freeze.json');Write-JsonFile $Config (Join-Path $ManagerRoot 'current-freeze.json')
         $record=[ordered]@{SchemaVersion=1;Status='Completed';Time=(Get-Date).ToString('o');MigrationPath=(Join-Path $migrationDir 'migration.json');PreviousMigrationPath=$previous;TargetProfile=$Config.FreezeRoot;ComparisonMode=$plan.ComparisonMode;FullIntegrityChecked=$false;GameBuildCompatible=$plan.GameBuildCompatible;GameSizeMismatch=@($plan.GameSizeMismatch);ImportedModIds=@($plan.MissingMods.ModID);AddedFiles=@($added|ForEach-Object{$_});MetadataBackup=@($metadataBackup)}
+        Write-StepEvent '保存回迁记录' '完成' '记录新增文件、哈希和迁移前元数据。'
         Write-JsonFile $record $record.MigrationPath 15;Write-JsonFile ([ordered]@{MigrationPath=$record.MigrationPath}) $pointer
         $report=Join-Path $Config.ReportPath ('migration_{0}.json' -f $stamp);Write-JsonFile $record $report 15
         Write-ManagerLog "增量迁移完成：新增游戏文件 $(@($added|Where-Object Category -eq 'Game').Count) 个，新增 MOD $($plan.MissingMods.Count) 个。" 'PASS'
@@ -488,6 +505,7 @@ function Invoke-IncrementalMigration {
 function Invoke-RollbackLatestMigration {
     param($Config)
     Assert-NoPZProcess
+    Write-StepEvent '读取最近迁移记录' '检查文件是否被修改' '不会删除迁移后被用户修改过的文件。'
     $pointer=Join-Path $Config.FreezeRoot 'migrations\last-migration.json'
     if(-not(Test-Path -LiteralPath $pointer -PathType Leaf)){throw '没有可回迁的迁移记录。'}
     $migrationPath=Assert-PathInsideProfile (Get-Content -LiteralPath $pointer -Raw|ConvertFrom-Json).MigrationPath $Config.FreezeRoot
@@ -495,6 +513,7 @@ function Invoke-RollbackLatestMigration {
     $record=Get-Content -LiteralPath $migrationPath -Raw|ConvertFrom-Json
     if($record.Status -ne 'Completed'){throw "最近迁移状态不是可回迁状态：$($record.Status)"}
     $conflicts=@()
+    Write-StepEvent '检查新增文件是否被修改' '移除本次新增文件' ("共 {0} 个文件。" -f @($record.AddedFiles).Count)
     foreach($item in @($record.AddedFiles)){
         $path=Assert-PathInsideProfile $item.Path $Config.FreezeRoot
         if(Test-Path -LiteralPath $path -PathType Leaf){
@@ -503,11 +522,13 @@ function Invoke-RollbackLatestMigration {
         }
     }
     if($conflicts.Count -gt 0){throw ("回迁已停止：本次新增文件中有 $($conflicts.Count) 个后来被修改。首个冲突：$($conflicts[0])")}
+    Write-StepEvent '移除本次新增文件' '恢复迁移前元数据' '仅处理最近一次迁移登记的文件。'
     foreach($item in @($record.AddedFiles|Sort-Object Path -Descending)){
         $path=Assert-PathInsideProfile $item.Path $Config.FreezeRoot
         if(Test-Path -LiteralPath $path -PathType Leaf){Remove-Item -LiteralPath $path -Force}
     }
     Restore-MigrationMetadata @($record.MetadataBackup) $Config
+    Write-StepEvent '恢复迁移前元数据' '完成' '正在更新回迁状态。'
     $record.Status='RolledBack';$record|Add-Member -NotePropertyName RollbackTime -NotePropertyValue (Get-Date).ToString('o') -Force
     Write-JsonFile $record $migrationPath 15
     if($record.PreviousMigrationPath){Write-JsonFile ([ordered]@{MigrationPath=$record.PreviousMigrationPath}) $pointer}else{Remove-Item -LiteralPath $pointer -Force}
@@ -568,12 +589,14 @@ function Invoke-StaticValidation {
 
 function Invoke-Verify {
     param($Config)
+    Write-StepEvent '校验冻结游戏文件' '校验冻结 MOD' '将重新计算 SHA-256，所需时间取决于文件数量和磁盘速度。'
     $gameExpected = @(Import-Csv -LiteralPath (Join-Path $Config.ManifestPath 'game.sha256.csv'))
     $modsExpected = @(Import-Csv -LiteralPath (Join-Path $Config.ManifestPath 'mods.sha256.csv'))
     $tempGame = Join-Path $env:TEMP ('pz_game_verify_{0}.csv' -f (Get-TimeStamp))
     $tempMods = Join-Path $env:TEMP ('pz_mods_verify_{0}.csv' -f (Get-TimeStamp))
     try {
         $gameActual = @(New-HashManifest -Root $Config.GamePath -OutputFile $tempGame -Label '冻结游戏（验证）')
+        Write-StepEvent '校验冻结 MOD' '生成校验报告' '正在重新计算 MOD 文件 SHA-256。'
         $copyMap = @(Import-Csv -LiteralPath (Join-Path $Config.FreezeRoot 'metadata\mod-copy-map.csv'))
         $modsActual = @(New-MappedLocalManifest -CopyMap $copyMap -OutputFile $tempMods -Label '冻结 MOD（验证）')
         $gameResult = Compare-ManifestRows $gameExpected $gameActual
@@ -581,6 +604,7 @@ function Invoke-Verify {
         $result=[ordered]@{Time=(Get-Date).ToString('o');Pass=($gameResult.Pass -and $modsResult.Pass);Game=$gameResult;Mods=$modsResult}
         $path=Join-Path $Config.ReportPath ('integrity-verify_{0}.json' -f (Get-TimeStamp))
         Write-JsonFile $result $path
+        Write-StepEvent '生成校验报告' '完成' ("报告：{0}" -f $path)
         if($result.Pass){Write-ManagerLog "完整性校验通过。报告：$path" 'PASS'}else{Write-ManagerLog "完整性校验失败。报告：$path" 'ERROR'}
         $result
     } finally {
@@ -631,6 +655,7 @@ function Invoke-Launch {
 function Invoke-SaveBackup {
     param($Config)
     Assert-NoPZProcess
+    Write-StepEvent '收集存档与配置' '压缩备份' '这是手动备份；增量迁移不会再自动执行整包存档压缩。'
     $stamp=Get-TimeStamp
     $dest=Join-Path $Config.BackupPath ('cache-snapshot_{0}.zip' -f $stamp)
     $stage=Join-Path $Config.FreezeRoot ('work\backup_stage_{0}' -f $stamp)
@@ -649,6 +674,7 @@ function Invoke-SaveBackup {
             $source=Join-Path $Config.CachePath ('mods\'+$fileName)
             if(Test-Path -LiteralPath $source){Copy-Item -LiteralPath $source -Destination (Join-Path $modsStage $fileName)}
         }
+        Write-StepEvent '压缩存档备份' '计算备份 SHA-256' '大型存档可能需要数分钟。'
         Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $dest -CompressionLevel Optimal
     } finally {
         $resolved=[IO.Path]::GetFullPath($stage)
@@ -659,6 +685,7 @@ function Invoke-SaveBackup {
     $hash=(Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash
     [pscustomobject]@{Backup=$dest;SHA256=$hash;Bytes=(Get-Item -LiteralPath $dest).Length} | ConvertTo-Json | Set-Content -LiteralPath ($dest+'.json') -Encoding UTF8
     Write-ManagerLog "独立缓存/存档备份完成：$dest" 'PASS'
+    Write-StepEvent '备份完成' '完成' ("文件：{0}" -f $dest)
 }
 
 function Invoke-SafeRestore {
@@ -808,10 +835,10 @@ switch ($Action) {
         $script:LogFile=Join-Path $logDir ('{0}_{1}.log' -f $Action.ToLowerInvariant(),(Get-TimeStamp))
         $config=Get-CurrentConfig $ManagerRoot
         switch($Action){
-            'PreviewMigration' {$plan=Get-MigrationPlan $config;Write-ManagerLog "快速迁移检查：缺失游戏文件 $($plan.GameMissing.Count)，大小不一致 $($plan.GameSizeMismatch.Count)，缺失 MOD $($plan.MissingMods.Count)。"; $plan|ConvertTo-Json -Depth 12}
+            'PreviewMigration' {Write-StepEvent '扫描来源与冻结目标' '汇总可迁移内容' '快速比较路径、大小和 Mod ID。';$plan=Get-MigrationPlan $config;Write-ManagerLog "快速迁移检查：缺失游戏文件 $($plan.GameMissing.Count)，大小不一致 $($plan.GameSizeMismatch.Count)，缺失 MOD $($plan.MissingMods.Count)。";Write-StepEvent '检查完成' '完成' ("缺失游戏文件 {0} 个，缺失 MOD {1} 个。" -f $plan.GameMissing.Count,$plan.MissingMods.Count)}
             'Migrate' {[void](Invoke-IncrementalMigration $config)}
             'RollbackMigration' {[void](Invoke-RollbackLatestMigration $config)}
-            'Verify' {[void](Invoke-Verify $config)}
+            'Verify' {$verifyResult=Invoke-Verify $config;if(-not $verifyResult.Pass){throw '完整性校验未通过，请在 reports 目录查看最新报告。'}}
             'Info' {$config|Format-List;Write-ManagerLog "冻结目录：$($config.FreezeRoot)"}
             'Launch' {[void](Invoke-Launch $config)}
             'TestLaunch' {[void](Invoke-Launch $config -Testing)}

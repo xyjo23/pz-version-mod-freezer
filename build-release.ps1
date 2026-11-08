@@ -1,8 +1,9 @@
 [CmdletBinding()]
-param([string]$Version='0.1.0-preview')
+param([string]$Version='0.3.0-preview')
 
 $ErrorActionPreference='Stop'
 $root=[IO.Path]::GetFullPath((Split-Path -Parent $PSCommandPath)).TrimEnd('\')
+& (Join-Path $root 'build-exe.ps1') | Out-Host
 $dist=Join-Path $root 'dist'
 $stage=Join-Path $dist ('PZ-Version-Mod-Freezer-{0}' -f $Version)
 $zip=$stage+'.zip'
@@ -15,7 +16,7 @@ if(Test-Path -LiteralPath $stage){Remove-Item -LiteralPath $stage -Recurse -Forc
 if(Test-Path -LiteralPath $zip){Remove-Item -LiteralPath $zip -Force}
 New-Item -ItemType Directory -Path $stage -Force|Out-Null
 
-foreach($file in @('PZ-Freezer.cmd','PZ-Freezer.ps1','README.md','LICENSE','NOTICE.md','SECURITY.md','CHANGELOG.md','project.json')){
+foreach($file in @('PZ-Freezer.exe','PZ-Freezer.cmd','PZ-Freezer.ps1','README.md','LICENSE','NOTICE.md','SECURITY.md','CHANGELOG.md','project.json')){
     Copy-Item -LiteralPath (Join-Path $root $file) -Destination (Join-Path $stage $file)
 }
 Copy-Item -LiteralPath (Join-Path $root 'tools') -Destination (Join-Path $stage 'tools') -Recurse
