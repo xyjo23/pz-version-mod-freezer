@@ -1,7 +1,7 @@
 {
   "name": "pz-launcher-next",
   "productName": "Project Zomboid Vault",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "A modern desktop launcher for isolated Project Zomboid environments.",
   "main": "./out/main/index.js",
   "private": true,
