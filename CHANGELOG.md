@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.6.1-preview - 2026-11-10
+
+- Fixed legacy frozen versions disappearing from the library when `metadata/freeze.json` contains a UTF-8 BOM.
+- Unified Steam original and frozen versions under one persisted current-version state.
+- Added user-defined display names as the primary title throughout the console, cards, details and migration sources.
+- Made a display name mandatory when creating a new managed version; game version and BuildID remain technical metadata.
+- Added compact and full relative version radars with time/version axes, sweep animation, hover details and double-click switching.
+- Renamed Environment Details and Environment Summary to Version Details and Version Summary.
+- Added current-version shortcuts for Mods, Saves, backups and operation logs to the console.
+- Reframed Help around the Console, Version Management and Maintenance Tool workflows.
+
+## 0.6.0-preview - 2026-11-10
+
+- Added the Electron/React Project Zomboid Vault launcher under `vault-launcher/` while retaining the legacy PowerShell implementation.
+- Added Steam AppID 108600 discovery through the registry, `libraryfolders.vdf` and the Steam app manifest.
+- Rebuilt version creation as an explicit source, mode and destination workflow.
+- Added safe full-copy migration from Steam or a frozen version without requiring pre-existing target files.
+- Added experimental hard-link reuse for frozen-version sources with copy fallback.
+- Added native SHA-256 manifests, native frozen-version launch and integrity verification.
+- Added first-run save-snapshot guidance and pre-migration backups of Saves, databases and root configuration.
+- Kept Saves, configuration and runtime cache outside all sharing and hard-link operations.
+- Replaced permanent activity panels with an optional terminal drawer for plans and operation output.
+
 ## 0.5.4-preview - 2026-11-08
 
 - Applied the project icon to the WPF window title bar and Windows taskbar process group.

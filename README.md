@@ -1,12 +1,14 @@
 # PZ Version & Mod Freezer
 
+> **0.6.1-preview：** 项目已新增 `vault-launcher/` Electron/React 桌面端。它提供控制台、统一版本管理、版本制作与检查、帮助、终端抽屉和版本雷达。原 PowerShell/WPF 实现仍保留在仓库根目录，作为旧版引擎与历史参考。
+
 这是一个面向 Windows 和 Project Zomboid 的便携式版本冻结工具。它可以把指定时刻的游戏本体、Workshop MOD、加载配置和存档复制到 Steam 管理范围之外，形成可独立启动、校验和备份的完整游戏环境。
 
 > Independent, verifiable snapshots of Project Zomboid, Workshop mods, configuration and saves for Windows. No installer or administrator rights required.
 
 ## 下载
 
-普通玩家请从 [Releases](https://github.com/xyjo23/pz-version-mod-freezer/releases/latest) 下载最新 ZIP。解压后先进入唯一的版本文件夹，里面是 `PZ-Freezer.exe` 和 `PZ-Freezer-Files` 程序文件夹；双击 EXE。不要移动或单独复制 EXE。程序文件夹内保留 `PZ-Freezer.cmd` 作为兼容入口。
+普通玩家请从 [Releases](https://github.com/xyjo23/pz-version-mod-freezer/releases/latest) 下载最新 `PZ-Vault-Portable` 或 `PZ-Vault-Setup`。0.5.4-preview 及更早版本仍使用 ZIP 内的 `PZ-Freezer.exe` 与 `PZ-Freezer-Files` 结构。
 
 Release 同时提供 SHA-256 校验文件。当前 EXE 尚未使用商业代码签名证书，因此 Windows 仍可能显示“未知发布者”或 SmartScreen 提醒；只有受信任的 Authenticode 证书才能从根本上消除此提示。不要安装来历不明的证书，也不要把自签名伪装成可信发布者。应用内“使用说明”不会再调用 `.md` 文件关联。
 
@@ -149,7 +151,7 @@ backups\     存档 ZIP 备份
 
 ## 当前版本
 
-项目版本：`0.5.4-preview`
+项目版本：`0.6.1-preview`
 
 这是根据一次 B42.21.0、154 个 Workshop 项目和 189 个存档 MOD 的真实迁移整理出的首个可运行版本。
 
