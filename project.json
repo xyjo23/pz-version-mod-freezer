@@ -1,8 +1,0 @@
-{
-  "name": "PZ Version & Mod Freezer",
-  "version": "0.6.1-preview",
-  "platform": "Windows",
-  "runtime": "Electron 33 + React 19 (legacy PowerShell engine retained)",
-  "appId": 108600,
-  "entryPoint": "vault-launcher"
-}

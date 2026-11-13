@@ -1,13 +1,7 @@
-profiles/
-logs/
-current-freeze.json
-version-library.json
+node_modules/
+out/
+release/
+*.log
 *.tmp
-*.zip
-dist/
 .DS_Store
 Thumbs.db
-/PZ-Freezer.exe
-/vault-launcher/node_modules/
-/vault-launcher/out/
-/vault-launcher/release/

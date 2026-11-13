@@ -6,8 +6,8 @@ import path from 'node:path'
 
 import { app, dialog, shell } from 'electron'
 
-import type { ActionResult, FreezeConfig, FreezeVersionSummary, LauncherAction, LauncherSnapshot } from '../shared/types'
-import { launchSteamGame, validateSteamGame } from './steam-service'
+import type { ActionResult, FreezeConfig, FreezeVersionSummary, LauncherAction, LauncherSnapshot, ModSummary } from '../shared/types'
+import { detectSteamInstallation, launchSteamGame, validateSteamGame } from './steam-service'
 
 const ACTIONS: ReadonlySet<LauncherAction> = new Set(['Launch', 'Verify', 'BackupSave'])
 
@@ -40,6 +40,65 @@ const saveActiveSource = async (activeSource: LauncherSettings['activeSource']):
 }
 
 const parseJson = <T>(raw: string): T => JSON.parse(raw.replace(/^\uFEFF/, '')) as T
+
+const readModInfo = async (modRoot: string): Promise<{ name: string | null; modId: string | null }> => {
+  try {
+    const raw = await fs.readFile(path.join(modRoot, 'mod.info'), 'utf8')
+    const value = (field: string): string | null => {
+      const match = raw.match(new RegExp(`^\\s*${field}\\s*=\\s*(.+?)\\s*$`, 'im'))
+      return match?.[1]?.trim().replace(/^["']|["']$/g, '') || null
+    }
+    return { name: value('name'), modId: value('id') }
+  } catch {
+    return { name: null, modId: null }
+  }
+}
+
+const fallbackModName = (directoryName: string): string =>
+  directoryName.replace(/^WS\d+__/, '').replace(/[_-]+/g, ' ').trim() || directoryName
+
+export const listCurrentMods = async (): Promise<ModSummary[]> => {
+  const snapshot = await getSnapshot()
+  const mods: ModSummary[] = []
+
+  if (snapshot.activeSource === 'Steam') {
+    const steam = await detectSteamInstallation()
+    if (!steam.workshopPath || !existsSync(steam.workshopPath)) return []
+    const projects = await fs.readdir(steam.workshopPath, { withFileTypes: true })
+    for (const project of projects.filter((entry) => entry.isDirectory())) {
+      const modsRoot = path.join(steam.workshopPath, project.name, 'mods')
+      if (!existsSync(modsRoot)) continue
+      const entries = await fs.readdir(modsRoot, { withFileTypes: true })
+      for (const entry of entries.filter((item) => item.isDirectory())) {
+        const info = await readModInfo(path.join(modsRoot, entry.name))
+        mods.push({
+          key: `${project.name}:${entry.name}`,
+          name: info.name ?? fallbackModName(entry.name),
+          modId: info.modId,
+          workshopId: project.name,
+          source: 'Workshop'
+        })
+      }
+    }
+  } else {
+    const modsRoot = snapshot.config?.CachePath ? path.join(snapshot.config.CachePath, 'mods') : null
+    if (!modsRoot || !existsSync(modsRoot)) return []
+    const entries = await fs.readdir(modsRoot, { withFileTypes: true })
+    for (const entry of entries.filter((item) => item.isDirectory())) {
+      const info = await readModInfo(path.join(modsRoot, entry.name))
+      const workshopId = entry.name.match(/^WS(\d+)__/)?.[1] ?? null
+      mods.push({
+        key: entry.name,
+        name: info.name ?? fallbackModName(entry.name),
+        modId: info.modId,
+        workshopId,
+        source: workshopId ? 'Workshop' : 'Local'
+      })
+    }
+  }
+
+  return mods.sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'))
+}
 
 const getLastBackup = async (
   backupPath: string

@@ -8,6 +8,7 @@ const api: VaultApi = {
   launchSteam: () => ipcRenderer.invoke('vault:launch-steam'),
   validateSteam: () => ipcRenderer.invoke('vault:validate-steam'),
   openPath: (targetPath: string) => ipcRenderer.invoke('vault:open-path', targetPath),
+  listCurrentMods: () => ipcRenderer.invoke('vault:list-current-mods'),
   listVersions: () => ipcRenderer.invoke('vault:list-versions'),
   activateVersion: (versionId: string) => ipcRenderer.invoke('vault:activate-version', versionId),
   activateSteam: () => ipcRenderer.invoke('vault:activate-steam'),

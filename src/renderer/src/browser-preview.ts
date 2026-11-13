@@ -14,7 +14,7 @@ const previewSnapshot: LauncherSnapshot = {
     ReportPath: 'D:\\PZ_Freeze_Manager\\frozen\\B42.12.3\\reports',
     BackupPath: 'D:\\PZ_Freeze_Manager\\frozen\\B42.12.3\\backups',
     Version: '42.12.3',
-    DisplayName: '长期生存主档',
+    DisplayName: 'B42.21.0_build25485521_20261104_195505_长期生存主档',
     BuildID: '20489167',
     WorkshopProjectCount: 154,
     EffectiveModCount: 287
@@ -36,10 +36,15 @@ export const installBrowserPreviewApi = (): void => {
     launchSteam: async () => true,
     validateSteam: async () => true,
     openPath: async () => true,
+    listCurrentMods: async () => [
+      { key: 'WS2392709985__CommonSense', name: 'Common Sense', modId: 'CommonSense', workshopId: '2392709985', source: 'Workshop' },
+      { key: 'WS2169435993__ModOptions', name: 'Mod Options', modId: 'modoptions', workshopId: '2169435993', source: 'Workshop' },
+      { key: 'LocalSurvivorTools', name: '幸存者工具扩展', modId: 'SurvivorTools', workshopId: null, source: 'Local' }
+    ],
     listVersions: async (): Promise<FreezeVersionSummary[]> => [
-      { id: 'B42.12.3_build20489167', name: '长期生存主档', freezeRoot: previewSnapshot.config!.FreezeRoot, version: '42.12.3', buildId: '20489167', created: new Date().toISOString(), workshopProjectCount: 154, effectiveModCount: 287, isActive: true, isHealthy: true },
-      { id: 'B41.78.16_buildLegacy', name: '怀旧模组服', freezeRoot: 'D:\\PZ_Freeze_Manager\\frozen\\B41.78.16', version: '41.78.16', buildId: 'legacy', created: new Date(Date.now() - 86400000 * 30).toISOString(), workshopProjectCount: 128, effectiveModCount: 164, isActive: false, isHealthy: true },
-      { id: 'B42.10.0_challenge', name: '冬季挑战', freezeRoot: 'D:\\PZ_Freeze_Manager\\frozen\\B42.10.0', version: '42.10.0', buildId: '20311801', created: new Date(Date.now() - 86400000 * 12).toISOString(), workshopProjectCount: 141, effectiveModCount: 202, isActive: false, isHealthy: true }
+      { id: 'B42.12.3_build20489167', name: 'B42.21.0_build25485521_20261104_195505_长期生存主档', freezeRoot: previewSnapshot.config!.FreezeRoot, version: '42.12.3', buildId: '20489167', created: new Date().toISOString(), workshopProjectCount: 154, effectiveModCount: 287, isActive: true, isHealthy: true },
+      { id: 'B41.78.16_buildLegacy', name: '怀旧模组服', freezeRoot: 'D:\\PZ_Freeze_Manager\\frozen\\B41.78.16', version: '41.78.16', buildId: 'legacy', created: new Date(Date.now() - 86400000 * 30).toISOString(), workshopProjectCount: 128, effectiveModCount: 164, isActive: false, isHealthy: false },
+      { id: 'B42.10.0_challenge', name: '极寒冬季长期生存挑战与大型模组兼容性测试专用版本名称', freezeRoot: 'D:\\PZ_Freeze_Manager\\frozen\\B42.10.0', version: '42.10.0', buildId: '20311801', created: new Date(Date.now() - 86400000 * 12).toISOString(), workshopProjectCount: 141, effectiveModCount: 202, isActive: false, isHealthy: true }
     ],
     activateVersion: async () => previewSnapshot,
     activateSteam: async () => ({ ...previewSnapshot, activeSource: 'Steam' }),

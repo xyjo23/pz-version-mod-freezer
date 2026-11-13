@@ -5,7 +5,7 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import type { LauncherAction } from '../shared/types'
 import { executeMigration, previewMigration } from './migration-service'
 import { detectSteamInstallation, launchSteamGame, validateSteamGame } from './steam-service'
-import { activateSteam, activateVersion, chooseManagerRoot, getSnapshot, listVersions, openLogs, runAction } from './vault-service'
+import { activateSteam, activateVersion, chooseManagerRoot, getSnapshot, listCurrentMods, listVersions, openLogs, runAction } from './vault-service'
 
 let mainWindow: BrowserWindow | null = null
 const iconPath = join(__dirname, '../../assets/app-icon.png')
@@ -57,6 +57,7 @@ app.whenReady().then(() => {
   ipcMain.handle('vault:launch-steam', launchSteamGame)
   ipcMain.handle('vault:validate-steam', validateSteamGame)
   ipcMain.handle('vault:open-path', async (_event, targetPath: string) => (await shell.openPath(targetPath)) === '')
+  ipcMain.handle('vault:list-current-mods', listCurrentMods)
   ipcMain.handle('vault:list-versions', listVersions)
   ipcMain.handle('vault:activate-version', (_event, versionId: string) => activateVersion(versionId))
   ipcMain.handle('vault:activate-steam', activateSteam)

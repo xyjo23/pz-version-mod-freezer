@@ -90,12 +90,21 @@ export type ActionResult = {
   finishedAt: string
 }
 
+export type ModSummary = {
+  key: string
+  name: string
+  modId: string | null
+  workshopId: string | null
+  source: 'Workshop' | 'Local'
+}
+
 export type VaultApi = {
   getSnapshot: () => Promise<LauncherSnapshot>
   detectSteam: () => Promise<SteamInstallation>
   launchSteam: () => Promise<boolean>
   validateSteam: () => Promise<boolean>
   openPath: (targetPath: string) => Promise<boolean>
+  listCurrentMods: () => Promise<ModSummary[]>
   listVersions: () => Promise<FreezeVersionSummary[]>
   activateVersion: (versionId: string) => Promise<LauncherSnapshot>
   activateSteam: () => Promise<LauncherSnapshot>

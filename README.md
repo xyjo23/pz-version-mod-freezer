@@ -1,177 +1,54 @@
-# PZ Version & Mod Freezer
+# Project Zomboid Vault
 
-> **0.6.1-preview：** 项目已新增 `vault-launcher/` Electron/React 桌面端。它提供控制台、统一版本管理、版本制作与检查、帮助、终端抽屉和版本雷达。原 PowerShell/WPF 实现仍保留在仓库根目录，作为旧版引擎与历史参考。
+面向 Windows 的 Project Zomboid Steam 原版与冻结版本管理器。项目从 `pz-version-mod-freezer` 的 PowerShell/WPF 原型演进而来，现在使用 Electron、React 和原生 Node 服务实现桌面工作流。
 
-这是一个面向 Windows 和 Project Zomboid 的便携式版本冻结工具。它可以把指定时刻的游戏本体、Workshop MOD、加载配置和存档复制到 Steam 管理范围之外，形成可独立启动、校验和备份的完整游戏环境。
+## 当前功能
 
-> Independent, verifiable snapshots of Project Zomboid, Workshop mods, configuration and saves for Windows. No installer or administrator rights required.
+- 自动从注册表、`libraryfolders.vdf` 和 AppID `108600` 清单发现 Steam 原版。
+- 统一管理 Steam 原版与冻结版本，并持久化当前版本。
+- 控制台围绕当前版本提供启动、模组、存档、备份和日志入口。
+- 版本卡片与相对版本雷达；雷达支持悬停信息和双击切换。
+- 明确的“来源 → 迁移模式 → 名称与目标”冻结版本制作流程。
+- 从 Steam 或冻结版执行安全完整复制。
+- 从冻结版执行实验性 NTFS 硬链接复用，失败或跨卷时回退复制。
+- 生成 SHA-256 基线清单，并提供原生启动与完整性校验。
+- 迁移前可备份 Saves、数据库和根配置。
+- 兼容旧 PowerShell 版本生成的带 UTF-8 BOM 的 `freeze.json`。
 
-## 下载
+## 数据安全边界
 
-普通玩家请从 [Releases](https://github.com/xyjo23/pz-version-mod-freezer/releases/latest) 下载最新 `PZ-Vault-Portable` 或 `PZ-Vault-Setup`。0.5.4-preview 及更早版本仍使用 ZIP 内的 `PZ-Freezer.exe` 与 `PZ-Freezer-Files` 结构。
+- Saves、配置、数据库和运行时缓存不会参与硬链接或共享。
+- Steam 原版禁止快速硬链接，避免 Steam 更新改变冻结内容。
+- 不以“成功启动三次”作为自动删除备份的依据。
+- 迁移失败时保留未完成目录用于诊断，不自动删除用户数据。
 
-Release 同时提供 SHA-256 校验文件。当前 EXE 尚未使用商业代码签名证书，因此 Windows 仍可能显示“未知发布者”或 SmartScreen 提醒；只有受信任的 Authenticode 证书才能从根本上消除此提示。不要安装来历不明的证书，也不要把自签名伪装成可信发布者。应用内“使用说明”不会再调用 `.md` 文件关联。
+## 开发
 
-## 快速开始
+需要 Node.js 22 与 pnpm 9：
 
-1. 退出 Project Zomboid。
-2. 双击 `PZ-Freezer.exe`。
-3. 确认工具自动检测到游戏、Workshop 和存档目录。
-4. 点击“**一键创建冻结版本**”。
-5. 等待复制、MOD 预检和 SHA-256 校验全部完成。
-6. 以后从工具中的“启动当前冻结版”进入冻结环境。
-
-创建过程不会修改 Steam 原版，但需要足够的磁盘空间，耗时取决于游戏、MOD 和存档文件数量。
-
-## 主要功能
-
-- 自动检测 Steam 库和 Project Zomboid（AppID 108600）。
-- 支持手动指定游戏、Workshop 和缓存/存档目录。
-- 检查存档启用的 MOD ID 和依赖关系。
-- 将游戏、MOD、配置和存档复制为独立快照。
-- 使用 `-nosteam` 和独立 `-cachedir` 启动。
-- 为游戏与 MOD 生成 SHA-256 基线并执行完整校验。
-- 选择具体存档并备份到用户指定的外部目录。
-- 支持多个版本快照及“设为当前”。
-- 根据物理内存为冻结副本设置保守的 Java 最大堆；不会修改 Steam 原版。
-- 检查 Steam/Workshop 与当前冻结版之间缺失的游戏文件和 Mod ID。
-- 只补齐缺失内容，不覆盖冻结版已有文件。
-- 保存最近一次迁移事务，并支持安全回迁。
-- 用清晰的“当前步骤 / 下一步 / 结果 / 用时 / 错误原因”代替底层复制输出。
-- 在应用内阅读使用说明，不再依赖 Windows 的 `.md` 文件关联。
-- 默认使用自动迁移：已有有效冻结文件时增量迁移，空目录时首次完整迁移。
-- 通过“自动迁移 / 备份存档”下拉模式分离不同工作流。
-- 建立跨目录版本库，选择任意健康冻结版本后直接启动、校验或打开目录。
-
-## 版本库启动器
-
-默认打开“版本”标签页。右上角“添加版本”会登记所选目录，并扫描程序内的 `profiles`、当前冻结版本以及用户添加的其它版本目录。添加的扫描目录保存在本机 `version-library.json`，Release 不会预置个人路径。
-
-版本列表显示游戏版本、Steam BuildID、MOD 数量和健康状态。选择版本后可以：
-
-- 点击版本卡片后，从右侧打开详情抽屉；未选择时不常驻显示详情。
-
-- “启动所选”：自动设为当前版本，然后使用该版本独立的游戏与 `cache` 启动。
-- “校验所选”：使用该版本的 SHA-256 基线进行完整校验。
-- “打开目录”：打开实际冻结目录。
-- “设为当前”：让迁移和存档备份功能改用该版本。
-
-设为当前成功后，按钮会立即变为不可点击的“当前版本”，版本卡片也会显示“当前”。关闭详情抽屉会取消选择，再次点击同一版本可以重新打开。
-
-Steam 管理的 Project Zomboid 会在每次启动时自动作为“Steam 原版”加入版本列表。检测成功时可通过 Steam 启动、请求 Steam 文件校验或打开实际安装目录；检测失败时列表仍显示“Steam 原版 · 未检测到”并给出原因。该项目不会写入 `version-library.json`，也不能被设为冻结迁移目标。
-
-Steam 来源、迁移目标、自动迁移、回迁和存档备份集中在第二个“迁移冻结工具”标签页，不再与日常版本启动混在同一页面。
-
-扫描会自动修正移动过的版本路径，并检查游戏 EXE、独立缓存和游戏清单。为避免误扫整个磁盘，新增版本目录最多向下扫描 6 层，且不允许直接把磁盘根目录加入版本库。
-
-## 增量迁移新 MOD
-
-当你在 Steam 创意工坊下载了新 MOD 后：
-
-1. 完全退出 Project Zomboid。
-2. 点击“选择位置”，选择已有冻结版本或一个空目录。
-3. 可以选择包含 `current-freeze.json` 的旧管理器目录，也可以直接选择包含 `game`、`cache` 和 `metadata\freeze.json` 的具体快照目录。
-4. 点击“检测目标”：已有有效冻结文件时自动选择增量迁移；空目录时自动选择首次完整迁移。
-5. 点击“检查迁移内容”。
-6. 查看缺失游戏文件、大小不一致文件和缺失 Mod ID 数量。
-7. 点击“开始自动迁移”并确认提示。
-8. 进入游戏后通过游戏界面为新档或指定存档启用 MOD。
-
-如果所选上级目录中只有一个冻结快照，工具会自动识别；如果包含多个快照，会要求进入并选择具体版本目录。非空但不是有效冻结版的目录会被阻止，避免覆盖无关文件。
-
-迁移采用快速比较：检查相对路径、文件是否存在及文件大小，不对所有已有文件重新计算 SHA-256。只有本次新增文件会计算 SHA-256 并增量写入基线，因此速度通常远快于完整校验。
-
-工具不会覆盖已经存在的冻结文件。若 Steam 游戏版本或 BuildID 与冻结版不同，将跳过游戏文件补齐，只迁移能被目标游戏版本识别的缺失 MOD。重复 Mod ID、缺失依赖或目标冲突会阻止自动迁移。
-
-## 路径从哪里来
-
-- 首次打开迁移页时，工具从本机 Steam 注册信息与 `steamapps/libraryfolders.vdf` 自动寻找 Project Zomboid 和 Workshop。
-- 存档/缓存默认检测当前 Windows 用户的 `Zomboid` 目录。
-- 如果继续使用同一个程序文件夹，`current-freeze.json` 和 `version-library.json` 会恢复上次选择的冻结版本和扫描目录。
-- Git 仓库与 Release 包不会写入或携带开发者、测试者或用户的个人游戏路径。
-
-迁移会在快照的 `migrations` 目录保存轻量事务，但不会自动压缩整个存档。需要存档快照时请单独点击“备份存档”。点击“回迁最近一次”时，工具只删除该事务新增且哈希未发生变化的文件，然后恢复迁移前的元数据和基线。若新增文件后来被修改，回迁会停止，不会强制删除。
-
-注意：文件和版本检查通过不代表 MOD 一定兼容已有存档。地图、世界生成、车辆和大型脚本 MOD 仍可能要求新档。
-
-## 精确备份存档
-
-在“3. 执行操作”中选择“备份存档”，再选择一个具体存档和外部保存目录。工具只压缩该存档目录，并生成内置清单、外部 JSON 摘要与 ZIP SHA-256。
-
-存档内部的地图分块、角色数据库、车辆、世界状态、MOD 状态和 `mods.txt` 会完整保留。工具不会擅自删除其中的文件：The Indie Stone 支持人员建议直接压缩所选存档文件夹，并明确指出删除地图分块会丢失对应区域的进度。参见 [官方论坛的备份建议](https://theindiestone.com/forums/topic/34807-game-freezing/) 和 [分块文件说明](https://theindiestone.com/forums/topic/25840-system-crash-messing-with-backup-save/)。
-
-不会放入 ZIP 的内容包括其它存档、已本地化 MOD 资源、日志、录像、Workshop 缓存以及全局按键和画面设置。这些内容不是恢复该存档世界所必需的。
-
-## 目录结构
-
-```text
-<解压目录>\
-└─ PZ-Version-Mod-Freezer-<版本>\         解压后进入此文件夹
-   ├─ PZ-Freezer.exe                     推荐入口
-   └─ PZ-Freezer-Files\                  程序文件夹，请勿与 EXE 分离
-      ├─ PZ-Freezer.cmd                  兼容入口
-      ├─ PZ-Freezer.ps1                 图形界面
-      ├─ assets\                        原创图标
-      ├─ tools\                         冻结核心和 MOD 分析器
-      ├─ profiles\                      兼容旧版的本地快照索引
-      ├─ logs\                          操作日志
-      ├─ current-freeze.json            当前选中的快照（迁移后出现）
-      └─ version-library.json           用户添加的版本扫描目录（运行后出现）
+```powershell
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm dev
 ```
 
-每个快照包含：
+构建 Windows installer 与 portable：
 
-```text
-game\        冻结游戏本体
-cache\       独立配置、MOD 和存档
-manifests\   SHA-256 基线
-metadata\    版本、BuildID、MOD 映射和来源记录
-reports\     创建、校验和运行环境报告
-backups\     存档 ZIP 备份
+```powershell
+pnpm dist:win
 ```
 
-## 安全边界
+产物位于 `release/`。
 
-工具不会：
+## 当前边界
 
-- 修改或锁定 Steam 的 `appmanifest_108600.acf`。
-- 伪造 Steam 游戏版本。
-- 在冻结目录与 Steam 目录之间建立符号链接、目录联接或硬链接。
-- 覆盖已有版本快照。
-- 修改 Steam 原版的 Java 内存配置。
+- 共享包正式导入仍处于格式设计阶段。
+- 深度 MOD/版本兼容规则库尚未完成。
+- SHA-256 内容寻址共享仓库属于下一阶段。
+- Windows 包暂未配置商业代码签名证书，系统可能显示“未知发布者”。
 
-请不要手工删除或覆盖 `profiles` 内的文件。Steam 版和冻结版应分别使用各自的入口和存档目录。
+## 来源与许可
 
-## 系统要求
+产品历史与旧版 PowerShell 实现位于 [xyjo23/pz-version-mod-freezer](https://github.com/xyjo23/pz-version-mod-freezer)。本项目不包含 Project Zomboid 游戏文件、Workshop MOD 或用户存档，也不隶属于 The Indie Stone、Valve 或 Steam。
 
-- Windows 10/11 64 位。
-- Windows PowerShell 5.1。
-- 已安装 Steam 版 Project Zomboid。
-- 目标盘可用空间至少为游戏、Workshop MOD 和缓存总大小的 115%。
-
-## 当前版本
-
-项目版本：`0.6.1-preview`
-
-这是根据一次 B42.21.0、154 个 Workshop 项目和 189 个存档 MOD 的真实迁移整理出的首个可运行版本。
-
-## English quick start
-
-1. Exit Project Zomboid.
-2. Download and extract the latest release ZIP.
-3. Run `PZ-Freezer.cmd`.
-4. Confirm the detected game, Workshop and cache/save paths.
-5. Run **Preflight only**, then click **Create frozen version**.
-6. Launch future sessions through **Launch current frozen version**.
-
-The tool copies real files outside `steamapps`; it does not edit or fake Steam manifests. Frozen profiles can consume significant disk space.
-
-## 致谢与来源
-
-本项目的“复制游戏与缓存、把 Workshop MOD 本地化，并使用 `-nosteam` 与独立 `-cachedir` 启动”思路参考了 [PZ-Wiki-Modding/PZ-Backup](https://github.com/PZ-Wiki-Modding/PZ-Backup)。Steam 库自动检测、安全确认和可恢复操作的产品设计也参考了 [mysteriousdev777/steam-update-freezer](https://github.com/mysteriousdev777/steam-update-freezer)。顶部导航、独立启动主视图和显眼的本地导入入口等 UI 信息架构参考了 [PvzLauncher/PvzLauncher](https://github.com/PvzLauncher/PvzLauncher)。本项目没有复制这些项目的代码或素材；详见 `NOTICE.md`。
-
-本仓库没有复制上述项目的源码；实现使用 PowerShell/WPF 独立编写，并采用不同的文件级快照方案。完整归属和许可证说明见 [NOTICE.md](NOTICE.md)。
-
-## 免责声明
-
-这是一个独立社区工具，与 The Indie Stone、Project Zomboid、Valve 或 Steam 没有关联，也未获得其认可。软件按“原样”提供；创建快照前请保留重要存档的额外备份。游戏本体、Workshop MOD 和存档不会包含在本仓库或 Release 中。
+源代码使用 MIT License；第三方许可见 `THIRD_PARTY_LICENSES.md`。
