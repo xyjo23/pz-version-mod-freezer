@@ -228,16 +228,17 @@ export const analyzeIntegrity = async (options: { submitSteamValidation?: boolea
   const snapshot = await getSnapshot()
   const generatedAt = new Date().toISOString()
   const source = snapshot.activeSource
+  const shouldSubmitSteamValidation = options.submitSteamValidation !== false
   const steam = source === 'Steam' ? await detectSteamInstallation() : null
   const sourceLabel = source === 'Steam' ? `Steam 原版 ${steam?.version ?? '未知'} · Build ${steam?.buildId ?? '—'}` : snapshot.config?.DisplayName?.trim() || snapshot.config?.Version || '当前冻结版本'
   const outputRoot = source === 'Steam' ? path.join(snapshot.managerRoot ?? app.getPath('userData'), 'reports', 'integrity') : path.join(snapshot.config?.ReportPath || path.join(snapshot.config?.FreezeRoot ?? app.getPath('userData'), 'reports'), 'integrity')
-  const methodology = source === 'Steam' ? ['确认 Steam 安装路径和当前二进制身份', '向 Steam 客户端提交 AppID 108600 官方文件验证请求'] : snapshot.config?.StorageMode === 'ThinReference' ? ['从 projectzomboid.jar 读取实际版本、revision 和 SHA-256', '逐个核对快速版 MOD 引用源、目标文件和硬链接/回退复制内容'] : ['解析创建版本时保存的游戏与 MOD SHA-256 清单', '逐文件重新计算 SHA-256，并检查缺失、变化、新增和不可读文件']
-  const limitations = source === 'Steam' ? ['Steam 没有向启动器提供验证完成回调；提交请求不等于验证已经通过。'] : ['完整性分析证明文件状态是否一致，不判断 MOD 之间能否协同运行。']
+  const methodology = source === 'Steam' ? ['确认 Steam 安装路径和当前二进制身份', shouldSubmitSteamValidation ? '向 Steam 客户端提交 AppID 108600 官方文件验证请求' : '只读模式不向 Steam 提交验证请求，避免验证或更新改变当前文件'] : snapshot.config?.StorageMode === 'ThinReference' ? ['从 projectzomboid.jar 读取实际版本、revision 和 SHA-256', '逐个核对快速版 MOD 引用源、目标文件和硬链接/回退复制内容'] : ['解析创建版本时保存的游戏与 MOD SHA-256 清单', '逐文件重新计算 SHA-256，并检查缺失、变化、新增和不可读文件']
+  const limitations = source === 'Steam' ? [shouldSubmitSteamValidation ? 'Steam 没有向启动器提供验证完成回调；提交请求不等于验证已经通过。' : '本次只确认现有安装身份，没有逐文件核对 Steam 官方基线，因此不能宣告文件完整性通过。'] : ['完整性分析证明文件状态是否一致，不判断 MOD 之间能否协同运行。']
 
   try {
     if (source === 'Steam') {
       if (!steam?.detected || !steam.gamePath) throw new Error(steam?.issue ?? '未识别到 Steam 原版。')
-      const submitted = options.submitSteamValidation !== false
+      const submitted = shouldSubmitSteamValidation
       if (submitted) await validateSteamGame()
       const summary: IntegrityReport['summary'] = { checkedFiles: 0, missingFiles: 0, changedFiles: 0, addedFiles: 0, unreadableFiles: 0, brokenReferences: 0, findings: 1 }
       return persist({ schemaVersion: 1, generatedAt, source, sourceLabel, plainSummary: submitted ? '已向 Steam 提交官方文件验证；必须等待 Steam 客户端完成后才能确认结果。' : '只读检查确认了 Steam 游戏身份；本次没有触发 Steam 官方文件验证。', reportPath: null, verdict: 'unknown', methodology, limitations, summary, findings: [finding('steam-external-verification', 'unknown', 'unverified', 'external', submitted ? '等待 Steam 完成官方文件验证' : '本次未触发 Steam 官方文件验证', submitted ? '启动器已经提交验证请求，但 Steam 未提供完成状态。' : '共享流程只读取现有游戏身份，避免 Steam 验证或更新改变正在比对的内容。', '当前不能宣告全部 Steam 文件完整，也不能宣告文件损坏。', submitted ? '等待 Steam 下载页面中的验证任务完成，再返回重新检测游戏身份。' : '需要官方文件验证时，请在完整性维护页面明确执行。', 'STEAM-EXTERNAL-VERIFICATION', [submitted ? 'steam://validate/108600' : 'read-only', steam.gamePath])], rawOutput: submitted ? 'steam://validate/108600' : 'read-only' }, outputRoot)

@@ -9,6 +9,7 @@ import { app, dialog, shell } from 'electron'
 import type { ActionResult, FreezeConfig, FreezeVersionSummary, LauncherAction, LauncherSnapshot, ModSummary, VersionImportResult } from '../shared/types'
 import { readGameIdentity } from './game-identity'
 import { discoverLocalMods, discoverWorkshopMods, toModSummaries } from './mod-resolver'
+import { frozenLaunchArguments } from './launch-arguments'
 import { detectSteamInstallation, launchSteamGame, validateSteamGame } from './steam-service'
 
 const ACTIONS: ReadonlySet<LauncherAction> = new Set(['Launch', 'Verify', 'BackupSave'])
@@ -209,9 +210,7 @@ const normalizedVersionConfig = (config: FreezeConfig, freezeRoot: string): Free
     ReportPath: config.ReportPath || path.join(freezeRoot, 'reports'),
     BackupPath: config.BackupPath || path.join(freezeRoot, 'backups'),
     EffectiveModCount: effectiveModCount(config),
-    LaunchArguments: (config.LaunchArguments ?? ['-nosteam', `-cachedir=${cachePath}`]).map((argument) =>
-      argument.startsWith('-cachedir=') ? `-cachedir=${cachePath}` : argument
-    )
+    LaunchArguments: frozenLaunchArguments(config.LaunchArguments, cachePath)
   }
 }
 
@@ -415,9 +414,7 @@ export const activateVersion = async (versionId: string): Promise<LauncherSnapsh
     ManifestPath: path.join(freezeRoot, 'manifests'),
     ReportPath: path.join(freezeRoot, 'reports'),
     BackupPath: path.join(freezeRoot, 'backups'),
-    LaunchArguments: (config.LaunchArguments ?? ['-nosteam']).map((argument) =>
-      argument.startsWith('-cachedir=') ? `-cachedir=${cachePath}` : argument
-    )
+    LaunchArguments: frozenLaunchArguments(config.LaunchArguments, cachePath)
   }
 
   if (settings.managerRoot) {
@@ -595,7 +592,7 @@ const runNativeAction = async (action: LauncherAction, config: FreezeConfig): Pr
   if (action === 'Launch') {
     const executable = path.join(config.GamePath, 'ProjectZomboid64.exe')
     if (!existsSync(executable)) throw new Error(`游戏程序不存在：${executable}`)
-    const args = config.LaunchArguments ?? ['-nosteam', `-cachedir=${config.CachePath}`]
+    const args = frozenLaunchArguments(config.LaunchArguments, config.CachePath)
     const child = spawn(executable, args, { cwd: config.GamePath, detached: true, stdio: 'ignore', windowsHide: false })
     const earlyExit = await new Promise<number | null>((resolve, reject) => {
       const timer = setTimeout(() => resolve(null), 2_000)

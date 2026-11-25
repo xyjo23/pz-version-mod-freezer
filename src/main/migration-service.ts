@@ -6,6 +6,7 @@ import path from 'node:path'
 import type { ActionResult, FreezeConfig, LauncherAction, MigrationPreview, MigrationRequest, SteamInstallation } from '../shared/types'
 import { readGameIdentity } from './game-identity'
 import { analyzeQuickMigration, materializeQuickMigration } from './quick-migration-service'
+import { frozenLaunchArguments } from './launch-arguments'
 import { detectSteamInstallation } from './steam-service'
 import { activateVersion, getSnapshot, listVersions } from './vault-service'
 
@@ -216,7 +217,7 @@ const writeRegisteredConfig = async (
     ReportPath: path.join(targetRoot, 'reports'),
     BackupPath: path.join(targetRoot, 'backups'),
     Created: new Date().toISOString(),
-    LaunchArguments: ['-nosteam', `-cachedir=${path.join(targetRoot, 'cache')}`],
+    LaunchArguments: frozenLaunchArguments(sourceConfig.LaunchArguments, path.join(targetRoot, 'cache')),
     MigrationMode: mode,
     SourceFreezeRoot: sourceConfig.FreezeRoot,
     StorageMode: 'FullCopy',
