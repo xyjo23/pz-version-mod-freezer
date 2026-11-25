@@ -1,7 +1,7 @@
 {
   "name": "pz-vault-launcher",
   "productName": "Project Zomboid Vault",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "description": "A modern desktop launcher for isolated Project Zomboid environments.",
   "main": "./out/main/index.js",
   "private": true,
@@ -14,9 +14,11 @@
     "test:launch": "tsx --test src/main/launch-arguments.test.ts",
     "test:mods": "tsx --test src/main/mod-resolver.test.ts",
     "test:migration": "tsx --test src/main/quick-migration-service.test.ts",
+    "test:translation": "tsx --test src/main/translation-analysis.test.ts",
     "test:radar": "node --experimental-strip-types --test src/renderer/src/radar-layout.test.ts",
-    "test:qa": "pnpm test:share && pnpm test:launch && pnpm test:mods && pnpm test:migration && pnpm test:radar && pnpm typecheck",
+    "test:qa": "pnpm test:share && pnpm test:launch && pnpm test:mods && pnpm test:migration && pnpm test:translation && pnpm test:radar && pnpm typecheck",
     "test:analysis:real": "set NODE_OPTIONS=--import tsx&& electron scripts/analysis-readonly-e2e.ts",
+    "test:analysis:fixtures": "set NODE_OPTIONS=--import tsx&& electron scripts/analysis-fixture-e2e.ts",
     "test:migration:e2e": "set NODE_OPTIONS=--import tsx&& electron scripts/migration-fixture-e2e.ts",
     "preview": "electron-vite preview",
     "dist:win": "electron-vite build && electron-builder --win --x64"

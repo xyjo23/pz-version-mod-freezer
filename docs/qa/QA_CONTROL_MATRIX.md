@@ -16,9 +16,9 @@ Status meanings:
 | Quarantined version | readable details, disabled switch, explicit quarantine explanation | PASS | packaged build regression |
 | Version radar | four distinct blips, one blocked blip, persisted list/radar setting | PASS | high-version-count fixture |
 | Version creation | source/mode/name rules plus isolated full and thin filesystem migrations | PASS | game-sized disk-full and occupied-file injection |
-| Analysis selector | native integrity/compatibility workspace switching; preview responsibility popover and result replacement | PASS | real evidence oracle fixtures |
-| Integrity report | summary, storage mode and finding rendering | PASS-MOCK | corrupted/missing file fixtures |
-| Compatibility report | controlled rendering plus real Steam/Workshop/save static analysis | PASS | synthetic dependency, cycle and semantic-overlap oracle fixtures |
+| Analysis selector | native integrity/compatibility workspace switching; preview responsibility popover and result replacement | PASS | packaged-build regression |
+| Integrity report | clean, missing, changed, added and empty-baseline oracle states | PASS | locked/unreadable file fault injection |
+| Compatibility report | real Steam data plus dependency, cycle, order, tiledef and semantic-translation oracle rules | PASS | Lua/runtime and crash-log correlation |
 | Share package | create, inspect, unsigned notice, install result | PASS-MOCK | actual `.pzshare` filesystem round trip |
 | Help center | native cards, open, next, close and v0.8 label; preview previous and topic scroll reset | PASS | packaged keyboard and small-window pass |
 | Settings | native page rendering; preview switches, terminal enable/disable and radar persistence | PASS | restart persistence in packaged build |

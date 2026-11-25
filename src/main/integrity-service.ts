@@ -207,7 +207,11 @@ const analyzeFullVersion = async (config: FreezeConfig): Promise<{ findings: Int
       continue
     }
     try {
-      results.push({ label: target.label, category: target.category, result: await verifyRoot(target.root, target.manifest) })
+      const result = await verifyRoot(target.root, target.manifest)
+      results.push({ label: target.label, category: target.category, result })
+      if (target.category === 'game' && result.checked === 0) {
+        findings.push(finding('baseline-empty-game', 'unknown', 'unverified', 'baseline', '游戏基线清单为空', '游戏 SHA-256 清单没有任何文件记录。', '即使目录当前也为空，这份清单仍不足以证明存在一个完整可启动的游戏版本。', '从可信 Steam 安装或完整冻结版本重新创建该版本。', 'FULL-GAME-BASELINE-NONEMPTY', [target.manifest, target.root]))
+      }
     } catch (error) {
       findings.push(finding(`baseline-invalid-${target.category}`, 'unknown', 'unverified', 'baseline', `${target.label}基线无法读取`, error instanceof Error ? error.message : '清单解析失败。', `无法对${target.label}进行完整逐文件核对；这不等于文件已经损坏。`, '恢复有效清单，或重新创建该冻结版本。', 'FULL-BASELINE-VALID', [target.manifest]))
     }

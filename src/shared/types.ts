@@ -380,6 +380,8 @@ export type FileOverlap = {
   modIds: string[]
   overridesBaseGame: boolean
   contentIdentical: boolean | null
+  semanticStatus?: 'keys-disjoint' | 'keys-conflict' | 'unparsed'
+  semanticEvidence?: string[]
 }
 
 export type CompatibilityReport = {

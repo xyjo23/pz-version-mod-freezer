@@ -18,6 +18,7 @@ import type {
 import { readGameIdentity } from './game-identity'
 import { detectSteamInstallation } from './steam-service'
 import { collectLayerFiles, discoverLocalMods, discoverWorkshopMods, gameVersionKey, normalizeModId, type ResolvedMod } from './mod-resolver'
+import { analyzeTranslationSemantics } from './translation-analysis'
 import { getSnapshot } from './vault-service'
 
 type AnalysisSource = {
@@ -200,7 +201,8 @@ const classifyFile = (relativePath: string): FileOverlapClassification => {
 }
 
 const overlapSeverity = (classification: FileOverlapClassification): CompatibilitySeverity => {
-  if (classification === 'translation' || classification === 'metadata') return 'pass'
+  if (classification === 'metadata') return 'pass'
+  if (classification === 'translation') return 'unknown'
   if (classification === 'scripts' || classification === 'map' || classification === 'tile-definition' || classification === 'asset') return 'warning'
   return 'unknown'
 }
@@ -238,7 +240,7 @@ const hashFile = (filePath: string): Promise<string> => new Promise((resolve, re
 const analyzeFiles = async (
   mods: ResolvedMod[],
   gamePath: string
-): Promise<{ overlaps: FileOverlap[]; overlapCount: number; identicalOverlapCount: number; classificationCounts: Map<FileOverlapClassification, number>; baseOverrideCount: number; binaryModIds: string[] }> => {
+): Promise<{ overlaps: FileOverlap[]; overlapCount: number; identicalOverlapCount: number; semanticSafeTranslationCount: number; classificationSeverityCounts: Map<FileOverlapClassification, Map<CompatibilitySeverity, number>>; baseOverrideCount: number; binaryModIds: string[] }> => {
   const owners = new Map<string, { displayPath: string; modIds: Set<string>; files: string[] }>()
   const baseOverrides = new Set<string>()
   const binaryModIds = new Set<string>()
@@ -267,20 +269,44 @@ const analyzeFiles = async (
       } catch {
         contentIdentical = null
       }
+      const translationSemantic = classification === 'translation' && contentIdentical !== true
+        ? await analyzeTranslationSemantics(owner.files)
+        : null
+      const severity: CompatibilitySeverity = contentIdentical === true
+        ? 'pass'
+        : translationSemantic?.status === 'keys-disjoint'
+          ? 'pass'
+          : translationSemantic?.status === 'keys-conflict'
+            ? 'warning'
+            : overlapSeverity(classification)
       return {
         relativePath: owner.displayPath,
         classification,
-        severity: contentIdentical === true ? 'pass' : overlapSeverity(classification),
+        severity,
         modIds: [...owner.modIds].sort((left, right) => left.localeCompare(right, 'en')),
         overridesBaseGame: baseOverrides.has(owner.displayPath.toLowerCase()),
-        contentIdentical
+        contentIdentical,
+        semanticStatus: translationSemantic?.status,
+        semanticEvidence: translationSemantic?.evidence
       }
     })))
   }
   allOverlaps.sort((left, right) => severityRank[left.severity] - severityRank[right.severity] || right.modIds.length - left.modIds.length || left.relativePath.localeCompare(right.relativePath, 'en'))
-  const classificationCounts = new Map<FileOverlapClassification, number>()
-  for (const overlap of allOverlaps.filter((entry) => entry.contentIdentical !== true)) classificationCounts.set(overlap.classification, (classificationCounts.get(overlap.classification) ?? 0) + 1)
-  return { overlaps: allOverlaps.slice(0, 120), overlapCount: allOverlaps.length, identicalOverlapCount: allOverlaps.filter((entry) => entry.contentIdentical === true).length, classificationCounts, baseOverrideCount: baseOverrides.size, binaryModIds: [...binaryModIds] }
+  const classificationSeverityCounts = new Map<FileOverlapClassification, Map<CompatibilitySeverity, number>>()
+  for (const overlap of allOverlaps.filter((entry) => entry.severity !== 'pass')) {
+    const counts = classificationSeverityCounts.get(overlap.classification) ?? new Map<CompatibilitySeverity, number>()
+    counts.set(overlap.severity, (counts.get(overlap.severity) ?? 0) + 1)
+    classificationSeverityCounts.set(overlap.classification, counts)
+  }
+  return {
+    overlaps: allOverlaps.slice(0, 120),
+    overlapCount: allOverlaps.length,
+    identicalOverlapCount: allOverlaps.filter((entry) => entry.contentIdentical === true).length,
+    semanticSafeTranslationCount: allOverlaps.filter((entry) => entry.semanticStatus === 'keys-disjoint').length,
+    classificationSeverityCounts,
+    baseOverrideCount: baseOverrides.size,
+    binaryModIds: [...binaryModIds]
+  }
 }
 
 export const analyzeCompatibility = async (): Promise<CompatibilityReport> => {
@@ -432,13 +458,13 @@ export const analyzeCompatibility = async (): Promise<CompatibilityReport> => {
   }
 
   const files = await analyzeFiles(chosenMods, source.gamePath)
-  for (const [classification, count] of files.classificationCounts) {
-    const severity = overlapSeverity(classification)
-    if (severity === 'pass') continue
-    const examples = files.overlaps.filter((overlap) => overlap.classification === classification && overlap.contentIdentical !== true).slice(0, 8)
-    issues.push(issue(`overlaps-${classification}`, severity, classification === 'binary' ? 'security' : 'files', `${count} 个 ${classification} 路径由多个 MOD 提供不同内容`, '已确认路径相同且文件哈希不同；静态扫描不能仅凭这一事实断言运行时一定冲突。', examples.map((overlap) => `${overlap.relativePath} ← ${overlap.modIds.join(', ')}`), unique(examples.flatMap((overlap) => overlap.modIds)), { confidence: 'inferred', impact: classification === 'asset' ? '加载顺序会决定最终显示的资源，可能只是外观覆盖。' : classification === 'lua' ? 'Lua 的实际影响取决于运行时事件、模块和函数实现，需要进一步语义分析。' : '后加载内容可能替代先加载内容，是否有害取决于文件语义。', action: '先查看示例路径和涉及 MOD；只有出现运行症状或作者明确说明时才判定为真实冲突。', rule: `FILE-OVERLAP-${classification.toUpperCase()}` }))
+  for (const [classification, severityCounts] of files.classificationSeverityCounts) for (const [severity, count] of severityCounts) {
+    const examples = files.overlaps.filter((overlap) => overlap.classification === classification && overlap.severity === severity).slice(0, 8)
+    const translationUnparsed = classification === 'translation' && severity === 'unknown'
+    issues.push(issue(`overlaps-${classification}-${severity}`, severity, classification === 'binary' ? 'security' : 'files', `${count} 个 ${classification} 路径需要进一步处理`, translationUnparsed ? '至少一个文件无法解析为支持的翻译键值格式，因此没有推断键冲突。' : classification === 'translation' ? '已解析翻译键，并确认存在同键不同值。' : '已确认路径相同且文件哈希不同；静态扫描不能仅凭这一事实断言运行时一定冲突。', examples.flatMap((overlap) => [`${overlap.relativePath} ← ${overlap.modIds.join(', ')}`, ...(overlap.semanticEvidence ?? [])]), unique(examples.flatMap((overlap) => overlap.modIds)), { confidence: classification === 'translation' ? severity === 'warning' ? 'confirmed' : 'unverified' : 'inferred', impact: classification === 'asset' ? '加载顺序会决定最终显示的资源，可能只是外观覆盖。' : classification === 'lua' ? 'Lua 的实际影响取决于运行时事件、模块和函数实现，需要进一步语义分析。' : translationUnparsed ? '当前证据不足以判断这些翻译容器是否包含同键不同值。' : classification === 'translation' ? '相同翻译键被赋予不同文字，最终显示内容可能受加载顺序影响。' : '后加载内容可能替代先加载内容，是否有害取决于文件语义。', action: translationUnparsed ? '检查文件编码和语法，或手工比较其中的翻译键。' : classification === 'translation' ? '核对列出的冲突键和 MOD 预期；如果是翻译补丁，应让补丁在原 MOD 之后加载。' : '先查看示例路径和涉及 MOD；只有出现运行症状或作者明确说明时才判定为真实冲突。', rule: `FILE-OVERLAP-${classification.toUpperCase()}` }))
   }
   if (files.identicalOverlapCount) issues.push(issue('identical-overlaps', 'pass', 'files', '同路径但内容完全相同的文件已排除风险', `${files.identicalOverlapCount} 个重叠路径的 SHA-256 完全一致，没有作为冲突报告。`, [], [], { confidence: 'confirmed', rule: 'FILE-OVERLAP-HASH-EQUALITY' }))
+  if (files.semanticSafeTranslationCount) issues.push(issue('translation-keys-disjoint', 'pass', 'files', '翻译容器的键互不冲突', `${files.semanticSafeTranslationCount} 个同路径翻译文件虽然字节不同，但解析后没有发现同键不同值。`, [], [], { confidence: 'confirmed', rule: 'FILE-TRANSLATION-KEYS-DISJOINT' }))
   if (files.baseOverrideCount) issues.push(issue('base-overrides', 'unknown', 'files', '检测到 MOD 使用了原版已有路径', `${files.baseOverrideCount} 个有效路径同时存在于游戏目录；这只是覆盖事实，不足以证明不兼容。`, [source.gamePath], [], { confidence: 'confirmed', impact: '可能是有意修改原版资源，也可能在游戏更新后需要适配。', action: '结合具体路径、MOD 说明和实际运行日志判断；不要仅凭数量删除 MOD。', rule: 'BASE-PATH-OVERRIDE' }))
   if (files.binaryModIds.length) issues.push(issue('binary-mods', 'unknown', 'security', '检测到 Java 或本地二进制扩展', '这类扩展可以直接影响游戏代码，静态文件扫描不能证明其安全性或兼容性。', files.binaryModIds, files.binaryModIds, { confidence: 'unverified', impact: '它们可能随游戏 revision 变化而失效，也具备普通 Lua MOD 之外的系统权限风险。', action: '只使用可信来源、优先选择可复现或开源构建，并在每次游戏更新后单独验证。', rule: 'BINARY-MOD-MANUAL-TRUST' }))
   const contentCoverageComplete = !selectedContext || (selectedContext.missingModIds.length === 0 && selectedContext.missingWorkshopIds.length === 0)
