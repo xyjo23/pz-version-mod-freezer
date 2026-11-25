@@ -7,6 +7,7 @@ import { app } from 'electron'
 import { executeMigration, previewMigration } from '../src/main/migration-service'
 import { activateVersion, getSnapshot, listVersions, runAction } from '../src/main/vault-service'
 import type { FreezeConfig, MigrationRequest } from '../src/shared/types'
+import { holdExclusiveFileLock } from './file-lock'
 
 const testRoot = process.env.PZ_MIGRATION_E2E_ROOT
 if (!testRoot) throw new Error('PZ_MIGRATION_E2E_ROOT is required.')
@@ -57,6 +58,20 @@ const main = async (): Promise<void> => {
 
   const baseVersion = (await listVersions()).find((version) => path.resolve(version.freezeRoot) === path.resolve(baseRoot))
   assert(baseVersion, 'Fixture base was not registered.')
+  const lockedRequest: MigrationRequest = { sourceType: 'Frozen', sourceId: baseVersion.id, mode: 'SafeCopy', label: 'Round5 Locked Source', protectSaves: false }
+  const lockedPreview = await previewMigration(lockedRequest)
+  assert.equal(lockedPreview.canRun, true, lockedPreview.warnings.join(' | '))
+  const exclusiveLock = await holdExclusiveFileLock(path.join(baseGame, 'media', 'base.txt'))
+  let lockedSourceBlocked = false
+  try {
+    const lockedResult = await executeMigration(lockedRequest)
+    assert.equal(lockedResult.ok, false)
+    assert.match(lockedResult.output, /Robocopy failed|未完成的目标保留/)
+    assert(lockedPreview.targetPath && existsSync(lockedPreview.targetPath), 'Failed migration did not preserve its partial target for diagnosis.')
+    lockedSourceBlocked = true
+  } finally {
+    await exclusiveLock.release()
+  }
   const safeRequest: MigrationRequest = { sourceType: 'Frozen', sourceId: baseVersion.id, mode: 'SafeCopy', label: 'Round2 Full', protectSaves: true }
   const safePreview = await previewMigration(safeRequest)
   assert.equal(safePreview.canRun, true, safePreview.warnings.join(' | '))
@@ -122,6 +137,7 @@ const main = async (): Promise<void> => {
     thinLaunchArguments: thinSnapshot.config?.LaunchArguments,
     referencedMods: thinSnapshot.config?.ReferencedMods?.length,
     duplicateTargetBlocked: true,
+    lockedSourceBlocked,
     thinChainBlocked: true,
     missingReferenceDetected,
     verify: restoredVerify.message

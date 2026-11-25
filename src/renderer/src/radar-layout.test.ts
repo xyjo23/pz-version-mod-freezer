@@ -31,6 +31,21 @@ test('所有常规版本点都保留在安全边界内', () => {
   }
 })
 
+test('大量相同身份版本仍保持为独立且有界的光点', () => {
+  const items = Array.from({ length: 80 }, (_, index) => ({
+    key: `same-${index}`,
+    version: '42.22.2',
+    created: '2026-11-25T08:00:00.000Z',
+    current: index === 41
+  }))
+  const positions = layoutRadarItems(items)
+  assert.equal(new Set(positions.map(({ left, top }) => `${left.toFixed(6)},${top.toFixed(6)}`)).size, items.length)
+  for (const position of positions) {
+    assert.ok(position.left >= 13 && position.left <= 87, `left=${position.left}`)
+    assert.ok(position.top >= 13 && position.top <= 87, `top=${position.top}`)
+  }
+})
+
 test('布局输入不变时坐标保持稳定', () => {
   assert.deepEqual(layoutRadarItems(sameIdentity), layoutRadarItems(sameIdentity))
 })

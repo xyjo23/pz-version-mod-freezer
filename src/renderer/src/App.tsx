@@ -405,6 +405,10 @@ export const App = (): React.JSX.Element => {
   const previewHelpTopic = previewMode?.get('helpTopic') as HelpTopicId | null
   const [activeHelpTopic, setActiveHelpTopic] = useState<HelpTopicId | null>(() => helpTutorials.some((topic) => topic.id === previewHelpTopic) ? previewHelpTopic : null)
   const helpScrollRef = useRef<HTMLDivElement>(null)
+  const helpDialogRef = useRef<HTMLElement>(null)
+  const detailDrawerRef = useRef<HTMLElement>(null)
+  const modsDrawerRef = useRef<HTMLElement>(null)
+  const onboardingDialogRef = useRef<HTMLElement>(null)
   const [isDrawerOpen, setDrawerOpen] = useState(previewMode?.get('drawer') === 'open')
   const [detailSelection, setDetailSelection] = useState<VersionDetailSelection | null>(null)
   const [isModsDrawerOpen, setModsDrawerOpen] = useState(previewMode?.get('mods') === 'open')
@@ -433,6 +437,8 @@ export const App = (): React.JSX.Element => {
   const [shareInspection, setShareInspection] = useState<SharePackageInspection | null>(null)
   const [saveProtection, setSaveProtection] = useState(() => window.localStorage.getItem('pz-vault-save-protection') === 'true')
   const [showSaveOnboarding, setShowSaveOnboarding] = useState(() => previewMode?.get('onboarding') === 'open' || (!import.meta.env.DEV && window.localStorage.getItem('pz-vault-save-onboarding-seen') !== 'true'))
+  const isHelpOpen = Boolean(activeHelpTopic)
+  const hasBlockingModal = showSaveOnboarding || isHelpOpen || isModsDrawerOpen || isDrawerOpen
 
   const refresh = useCallback(async () => {
     const [nextSnapshot, nextVersions, nextSteam] = await Promise.all([window.vault.getSnapshot(), window.vault.listVersions(), window.vault.detectSteam()])
@@ -450,6 +456,45 @@ export const App = (): React.JSX.Element => {
   useEffect(() => {
     if (activeHelpTopic) helpScrollRef.current?.scrollTo({ top: 0, behavior: 'auto' })
   }, [activeHelpTopic])
+  useEffect(() => {
+    const modal = showSaveOnboarding
+      ? onboardingDialogRef.current
+      : isHelpOpen
+        ? helpDialogRef.current
+        : isModsDrawerOpen
+          ? modsDrawerRef.current
+          : isDrawerOpen
+            ? detailDrawerRef.current
+            : null
+    if (!modal) return
+    const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const focusFrame = window.requestAnimationFrame(() => modal.focus({ preventScroll: true }))
+    const trapFocus = (event: KeyboardEvent): void => {
+      if (event.key !== 'Tab') return
+      const focusable = [...modal.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+        .filter((element) => !element.hasAttribute('inert') && element.getAttribute('aria-hidden') !== 'true')
+      if (!focusable.length) {
+        event.preventDefault()
+        modal.focus({ preventScroll: true })
+        return
+      }
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && (document.activeElement === first || !modal.contains(document.activeElement))) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && (document.activeElement === last || !modal.contains(document.activeElement))) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    modal.addEventListener('keydown', trapFocus)
+    return () => {
+      window.cancelAnimationFrame(focusFrame)
+      modal.removeEventListener('keydown', trapFocus)
+      returnFocus?.focus({ preventScroll: true })
+    }
+  }, [showSaveOnboarding, isHelpOpen, isModsDrawerOpen, isDrawerOpen])
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
@@ -770,7 +815,7 @@ export const App = (): React.JSX.Element => {
 
   return (
     <div className="app-shell">
-      <header className="titlebar">
+      <header className="titlebar" inert={hasBlockingModal}>
         <div className="brand-mark"><VaultMark /></div>
         <div className="brand-copy"><strong>ZOMBOID VAULT</strong><span>ISOLATED BUILD MANAGER</span></div>
         <div className="titlebar-spacer" />
@@ -779,7 +824,7 @@ export const App = (): React.JSX.Element => {
         <button className="window-button close" onClick={() => void window.vault.closeWindow()} aria-label="关闭"><X /></button>
       </header>
 
-      <div className="workspace">
+      <div className="workspace" inert={hasBlockingModal}>
         <aside className="sidebar">
           <div className="nav-section-label">工作区</div>
           <nav>
@@ -885,8 +930,8 @@ export const App = (): React.JSX.Element => {
           ) : (
             <>
               <section className="page-heading enter"><div><span className="eyebrow">LAUNCHER PREFERENCES</span><h1>设置</h1><p>调整控制台显示内容和启动器使用偏好。</p></div></section>
-              <section className="settings-panel enter delay-1"><div className="settings-heading"><div className="settings-icon"><SlidersHorizontal /></div><div><h2>界面模块</h2><p>选择启动器中需要显示的附加信息。</p></div></div><button className={`setting-row ${showVersionRadar ? 'enabled' : ''}`} onClick={toggleVersionRadar}><div><b>版本管理使用雷达</b><span>开启时显示相对版本雷达；关闭后改用单列版本清单。</span></div><span className="toggle" aria-hidden="true"><i /></span></button><button className={`setting-row ${showTerminal ? 'enabled' : ''}`} onClick={toggleTerminal}><div><b>启用“终端”抽屉</b><span>开启后，左侧会出现二级悬浮入口；悬停预览，点击可固定终端。</span></div><span className="toggle" aria-hidden="true"><i /></span></button></section>
-              <section className="settings-panel enter delay-2"><div className="settings-heading"><div className="settings-icon amber"><Archive /></div><div><h2>存档保护</h2><p>控制版本迁移前是否额外保存可恢复的安全快照。</p></div></div><button className={`setting-row ${saveProtection ? 'enabled' : ''}`} onClick={() => updateSaveProtection(!saveProtection)}><div><b>迁移前创建存档安全快照</b><span>开启后，在复制或复用开始前备份 Saves、数据库与根配置。无论是否开启，可变数据都不会参与硬链接或共享。</span></div><span className="toggle" aria-hidden="true"><i /></span></button><div className="retention-note"><ShieldAlert /><span><b>不会在第三次启动后自动删除</b><small>“启动三次即删除”无法证明三次游戏均正常退出。当前版本保留快照，后续加入明确确认后再清理。</small></span></div></section>
+              <section className="settings-panel enter delay-1"><div className="settings-heading"><div className="settings-icon"><SlidersHorizontal /></div><div><h2>界面模块</h2><p>选择启动器中需要显示的附加信息。</p></div></div><button className={`setting-row ${showVersionRadar ? 'enabled' : ''}`} role="switch" aria-checked={showVersionRadar} onClick={toggleVersionRadar}><div><b>版本管理使用雷达</b><span>开启时显示相对版本雷达；关闭后改用单列版本清单。</span></div><span className="toggle" aria-hidden="true"><i /></span></button><button className={`setting-row ${showTerminal ? 'enabled' : ''}`} role="switch" aria-checked={showTerminal} onClick={toggleTerminal}><div><b>启用“终端”抽屉</b><span>开启后，左侧会出现二级悬浮入口；悬停预览，点击可固定终端。</span></div><span className="toggle" aria-hidden="true"><i /></span></button></section>
+              <section className="settings-panel enter delay-2"><div className="settings-heading"><div className="settings-icon amber"><Archive /></div><div><h2>存档保护</h2><p>控制版本迁移前是否额外保存可恢复的安全快照。</p></div></div><button className={`setting-row ${saveProtection ? 'enabled' : ''}`} role="switch" aria-checked={saveProtection} onClick={() => updateSaveProtection(!saveProtection)}><div><b>迁移前创建存档安全快照</b><span>开启后，在复制或复用开始前备份 Saves、数据库与根配置。无论是否开启，可变数据都不会参与硬链接或共享。</span></div><span className="toggle" aria-hidden="true"><i /></span></button><div className="retention-note"><ShieldAlert /><span><b>不会在第三次启动后自动删除</b><small>“启动三次即删除”无法证明三次游戏均正常退出。当前版本保留快照，后续加入明确确认后再清理。</small></span></div></section>
               <section className="settings-panel compact enter delay-3"><div className="settings-heading"><div className="settings-icon"><ScrollText /></div><div><h2>操作日志</h2><p>查看创建、校验、启动和备份的历史日志文件。</p></div></div><button className="secondary-button" onClick={() => void window.vault.openLogs()}><FolderOpen />打开日志目录</button></section>
               <section className="settings-panel compact enter delay-3"><div className="settings-heading"><div className="settings-icon neutral"><ShieldCheck /></div><div><h2>版本管理目录</h2><p>当前目录：{snapshot?.managerRoot ?? '尚未配置'}</p></div></div><button className="secondary-button" onClick={() => void chooseRoot()}><FolderCog />重新选择管理器目录</button></section>
             </>
@@ -895,7 +940,7 @@ export const App = (): React.JSX.Element => {
       </div>
 
       {selectedHelpTutorial && <div className="help-modal-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) setActiveHelpTopic(null) }}>
-        <section className="help-modal" role="dialog" aria-modal="true" aria-labelledby="help-tutorial-title">
+        <section className="help-modal" ref={helpDialogRef} role="dialog" aria-modal="true" aria-labelledby="help-tutorial-title" tabIndex={-1}>
           <aside className="help-modal-nav">
             <div className="help-modal-brand"><BookOpen /><div><span>使用教程</span><b>生存者手册</b></div></div>
             <nav aria-label="教程主题">{helpTutorials.map((topic) => <button className={topic.id === selectedHelpTutorial.id ? 'active' : ''} key={topic.id} onClick={() => setActiveHelpTopic(topic.id)}><span>{topic.number}</span><div><b>{topic.title}</b><small>{topic.eyebrow}</small></div><ChevronRight /></button>)}</nav>
@@ -914,15 +959,15 @@ export const App = (): React.JSX.Element => {
         </section>
       </div>}
 
-      <div className={`drawer-backdrop ${isDrawerOpen ? 'open' : ''}`} onMouseDown={(event) => { if (event.currentTarget === event.target) { setDrawerOpen(false); setDetailSelection(null) } }}>
-        <aside className="environment-drawer" role="dialog" aria-modal="true" aria-label="版本详情">
+      <div className={`drawer-backdrop ${isDrawerOpen ? 'open' : ''}`} aria-hidden={!isDrawerOpen} inert={!isDrawerOpen} onMouseDown={(event) => { if (event.currentTarget === event.target) { setDrawerOpen(false); setDetailSelection(null) } }}>
+        <aside className="environment-drawer" ref={detailDrawerRef} role="dialog" aria-modal="true" aria-label="版本详情" tabIndex={-1}>
           <header className="drawer-header"><div><span className="eyebrow">VERSION DETAILS</span><h2>版本详情</h2></div><button className="icon-button" onClick={() => { setDrawerOpen(false); setDetailSelection(null) }} aria-label="关闭详情"><X /></button></header>
           <div className="drawer-scroll"><div className={`drawer-health ${detailHealthy ? 'healthy' : 'warning'}`}><ShieldCheck /><div><b>{detailHealthTitle}</b><span>{detailHealthText}</span></div></div><div className="drawer-version"><div className={`drawer-monogram ${detailIsSteam ? 'steam' : ''}`}>{detailIsSteam ? 'ST' : 'PZ'}</div><div><span>{detailBuildKind}</span><h3>{detailName}</h3><small>版本 {detailTechnicalVersion ?? '未知'} · Build {detailBuildId ?? '—'}</small></div></div><section className="drawer-section"><h4>版本摘要</h4><dl><div><dt>有效模组</dt><dd>{detailIsSteam ? '由 Steam 管理' : detailFrozen?.effectiveModCount ?? '—'}</dd></div><div><dt>Workshop 项目</dt><dd>{detailIsSteam ? steam?.workshopProjectCount ?? '—' : detailFrozen?.workshopProjectCount ?? '—'}</dd></div><div><dt>{detailIsSteam ? '清单更新' : '冻结时间'}</dt><dd>{formatDate(detailIsSteam ? steam?.installedAt : detailFrozen?.created)}</dd></div></dl></section><section className="drawer-section"><h4>文件位置</h4>{detailIsSteam ? <><div className="path-item"><span>Steam 游戏</span><code>{compactPath(steam?.gamePath)}</code></div><div className="path-item"><span>Workshop</span><code>{compactPath(steam?.workshopPath)}</code></div><div className="path-item"><span>用户数据</span><code>{compactPath(steam?.cachePath)}</code></div></> : <><div className="path-item"><span>版本目录</span><code>{compactPath(detailFrozen?.freezeRoot)}</code></div><div className="path-item"><span>{detailFrozen?.storageMode === 'ThinReference' ? '引用游戏' : '冻结游戏'}</span><code>{compactPath(detailFrozen?.gamePath)}</code></div><div className="path-item"><span>独立缓存</span><code>{compactPath(detailFrozen?.cachePath)}</code></div><div className="path-item"><span>备份目录</span><code>{compactPath(detailFrozen?.backupPath)}</code></div></>}</section></div>
           <footer className="drawer-footer"><button className="secondary-button" disabled={!detailHealthy} onClick={openCurrentVersionPath}><FolderOpen />打开版本目录</button><button className="launch-button compact" disabled={!detailHealthy || isBusy || switchingId !== null} onClick={() => { if (detailIsCurrent) void perform('Launch'); else if (detailIsSteam) void activateSteam(); else if (detailFrozen) void activateVersion(detailFrozen.id) }}>{detailIsCurrent ? <Play fill="currentColor" /> : <RefreshCw />}{detailIsCurrent ? '启动当前版本' : '切换到此版本'}</button></footer>
         </aside>
       </div>
-      <div className={`drawer-backdrop ${isModsDrawerOpen ? 'open' : ''}`} onMouseDown={(event) => { if (event.currentTarget === event.target) setModsDrawerOpen(false) }}>
-        <aside className="environment-drawer mods-drawer" role="dialog" aria-modal="true" aria-label="有效模组">
+      <div className={`drawer-backdrop ${isModsDrawerOpen ? 'open' : ''}`} aria-hidden={!isModsDrawerOpen} inert={!isModsDrawerOpen} onMouseDown={(event) => { if (event.currentTarget === event.target) setModsDrawerOpen(false) }}>
+        <aside className="environment-drawer mods-drawer" ref={modsDrawerRef} role="dialog" aria-modal="true" aria-label="有效模组" tabIndex={-1}>
           <header className="drawer-header"><div><span className="eyebrow">ACTIVE MODS</span><h2>有效模组</h2><small>{currentDisplayName}</small></div><button className="icon-button" onClick={() => setModsDrawerOpen(false)} aria-label="关闭模组列表"><X /></button></header>
           <div className="drawer-scroll mods-drawer-scroll">
             <div className="mods-overview"><div className="drawer-monogram"><Boxes /></div><div><b>{modsLoading ? '正在识别模组…' : `${currentMods.length} 个模组`}</b><span>名称来自模组自身的 mod.info；Workshop 编号仅作为辅助标识。</span></div></div>
@@ -931,8 +976,8 @@ export const App = (): React.JSX.Element => {
           <footer className="drawer-footer mods-footer"><span>后续的启用、停用、添加和移除操作将从此抽屉接入。</span><button className="secondary-button" onClick={() => void openMods()}><RefreshCw />重新扫描</button></footer>
         </aside>
       </div>
-      {showTerminal && <><button className={`terminal-float-button ${isTerminalOpen ? 'open' : ''} ${isTerminalPinned ? 'pinned' : ''}`} onMouseEnter={() => setTerminalOpen(true)} onClick={() => { setTerminalOpen(true); setTerminalPinned((value) => !value) }} aria-label="打开终端"><SquareTerminal /><span>终端</span></button><aside className={`terminal-drawer ${isTerminalOpen ? 'open' : ''}`} onMouseLeave={() => { if (!isTerminalPinned && !isBusy) setTerminalOpen(false) }} aria-label="操作终端"><header><div><span className="eyebrow">VAULT TERMINAL</span><h2>操作终端</h2></div><div className="terminal-header-actions"><button className={`icon-button ${isTerminalPinned ? 'active' : ''}`} onClick={() => setTerminalPinned((value) => !value)} aria-label={isTerminalPinned ? '取消固定终端' : '固定终端'}>{isTerminalPinned ? <PinOff /> : <Pin />}</button><button className="icon-button" onClick={() => { setTerminalOpen(false); setTerminalPinned(false) }} aria-label="关闭终端"><X /></button></div></header><div className="terminal-body"><div className="terminal-status"><span className={`terminal-dot ${isBusy ? 'running' : lastResult?.ok === false ? 'error' : ''}`} /><div><b>{isBusy ? '正在执行' : lastResult ? '操作已结束' : '终端待命'}</b><small>{terminalAction ?? '等待选择操作'}</small></div></div><div className="terminal-screen"><div className="terminal-command"><span className="prompt">pz-vault&gt;</span> {terminalAction ? terminalAction.toLowerCase() : 'idle'}</div>{terminalAction ? <>{terminalPlan.map((step, index) => <div className="terminal-plan" key={step}><span>[PLAN {String(index + 1).padStart(2, '0')}]</span>{step}</div>)}{isBusy && <div className="terminal-running"><span>[RUNNING]</span>PowerShell 引擎正在执行，请等待返回结果……</div>}{lastResult && <><div className={lastResult.ok ? 'terminal-complete' : 'terminal-error'}><span>[{lastResult.ok ? 'DONE' : 'ERROR'}]</span>{lastResult.message} · {formatDate(lastResult.finishedAt)}</div><pre>{lastResult.output || '操作完成，没有额外输出。'}</pre></>}</> : <div className="terminal-idle">[IDLE] 请选择启动、校验或备份操作。</div>}</div></div><footer><button className="secondary-button" onClick={() => void refresh()}><RefreshCw />刷新环境</button><button className="secondary-button" onClick={() => setActiveView('settings')}><Settings2 />终端设置</button></footer></aside></>}
-      {showSaveOnboarding && <div className="onboarding-backdrop"><section className="save-onboarding" role="dialog" aria-modal="true" aria-label="存档保护设置"><div className="onboarding-icon"><ShieldAlert /></div><span className="eyebrow">FIRST START / SAVE SAFETY</span><h2>迁移前是否创建存档安全快照？</h2><p>启用后，每次创建受管版本前，启动器会先备份来源的 <code>Saves</code>、数据库与根配置，再开始复制或快速复用。</p><div className="onboarding-warning"><CircleAlert /><span><b>存档属于不可共享的可变数据</b><small>无论是否启用额外快照，存档和运行时缓存都会保持独立，绝不参与硬链接或共享。</small></span></div><p className="onboarding-footnote">建议开启。启动器不会因为“成功启动三次”就自动删除旧文件；在无法确认游戏正常退出前，自动删除不是安全实践。</p><div className="onboarding-actions"><button className="secondary-button" onClick={() => updateSaveProtection(false)}>暂不开启</button><button className="primary-button" onClick={() => updateSaveProtection(true)}><ShieldCheck />开启安全快照</button></div></section></div>}
+      {showTerminal && <><button className={`terminal-float-button ${isTerminalOpen ? 'open' : ''} ${isTerminalPinned ? 'pinned' : ''}`} aria-hidden={hasBlockingModal} inert={hasBlockingModal} onMouseEnter={() => setTerminalOpen(true)} onClick={() => { setTerminalOpen(true); setTerminalPinned((value) => !value) }} aria-label="打开终端"><SquareTerminal /><span>终端</span></button><aside className={`terminal-drawer ${isTerminalOpen ? 'open' : ''}`} aria-hidden={!isTerminalOpen || hasBlockingModal} inert={!isTerminalOpen || hasBlockingModal} onMouseLeave={() => { if (!isTerminalPinned && !isBusy) setTerminalOpen(false) }} aria-label="操作终端"><header><div><span className="eyebrow">VAULT TERMINAL</span><h2>操作终端</h2></div><div className="terminal-header-actions"><button className={`icon-button ${isTerminalPinned ? 'active' : ''}`} onClick={() => setTerminalPinned((value) => !value)} aria-label={isTerminalPinned ? '取消固定终端' : '固定终端'}>{isTerminalPinned ? <PinOff /> : <Pin />}</button><button className="icon-button" onClick={() => { setTerminalOpen(false); setTerminalPinned(false) }} aria-label="关闭终端"><X /></button></div></header><div className="terminal-body"><div className="terminal-status"><span className={`terminal-dot ${isBusy ? 'running' : lastResult?.ok === false ? 'error' : ''}`} /><div><b>{isBusy ? '正在执行' : lastResult ? '操作已结束' : '终端待命'}</b><small>{terminalAction ?? '等待选择操作'}</small></div></div><div className="terminal-screen"><div className="terminal-command"><span className="prompt">pz-vault&gt;</span> {terminalAction ? terminalAction.toLowerCase() : 'idle'}</div>{terminalAction ? <>{terminalPlan.map((step, index) => <div className="terminal-plan" key={step}><span>[PLAN {String(index + 1).padStart(2, '0')}]</span>{step}</div>)}{isBusy && <div className="terminal-running"><span>[RUNNING]</span>PowerShell 引擎正在执行，请等待返回结果……</div>}{lastResult && <><div className={lastResult.ok ? 'terminal-complete' : 'terminal-error'}><span>[{lastResult.ok ? 'DONE' : 'ERROR'}]</span>{lastResult.message} · {formatDate(lastResult.finishedAt)}</div><pre>{lastResult.output || '操作完成，没有额外输出。'}</pre></>}</> : <div className="terminal-idle">[IDLE] 请选择启动、校验或备份操作。</div>}</div></div><footer><button className="secondary-button" onClick={() => void refresh()}><RefreshCw />刷新环境</button><button className="secondary-button" onClick={() => setActiveView('settings')}><Settings2 />终端设置</button></footer></aside></>}
+      {showSaveOnboarding && <div className="onboarding-backdrop"><section className="save-onboarding" ref={onboardingDialogRef} role="dialog" aria-modal="true" aria-label="存档保护设置" tabIndex={-1}><div className="onboarding-icon"><ShieldAlert /></div><span className="eyebrow">FIRST START / SAVE SAFETY</span><h2>迁移前是否创建存档安全快照？</h2><p>启用后，每次创建受管版本前，启动器会先备份来源的 <code>Saves</code>、数据库与根配置，再开始复制或快速复用。</p><div className="onboarding-warning"><CircleAlert /><span><b>存档属于不可共享的可变数据</b><small>无论是否启用额外快照，存档和运行时缓存都会保持独立，绝不参与硬链接或共享。</small></span></div><p className="onboarding-footnote">建议开启。启动器不会因为“成功启动三次”就自动删除旧文件；在无法确认游戏正常退出前，自动删除不是安全实践。</p><div className="onboarding-actions"><button className="secondary-button" onClick={() => updateSaveProtection(false)}>暂不开启</button><button className="primary-button" onClick={() => updateSaveProtection(true)}><ShieldCheck />开启安全快照</button></div></section></div>}
       {notice && <div className={`toast ${notice.kind}`}>{notice.kind === 'success' ? <CheckCircle2 /> : <CircleAlert />}<span>{notice.text}</span></div>}
     </div>
   )

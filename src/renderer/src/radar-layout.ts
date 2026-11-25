@@ -23,21 +23,19 @@ const timestamp = (value?: string): number | null => {
   return Number.isFinite(parsed) ? parsed : null
 }
 
-const radarSlots: RadarPosition[] = [
-  { left: 50, top: 50 },
-  ...[
-    { radius: 12, count: 6 },
-    { radius: 21, count: 10 },
-    { radius: 29, count: 14 },
-    { radius: 37, count: 18 }
-  ].flatMap(({ radius, count }, ringIndex) => Array.from({ length: count }, (_, index) => {
-    const angle = -Math.PI / 2 + (Math.PI * 2 * index) / count + ringIndex * 0.09
+const buildRadarSlots = (count: number): RadarPosition[] => {
+  if (count <= 0) return []
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5))
+  return Array.from({ length: count }, (_, index) => {
+    const ratio = Math.sqrt((index + 0.65) / count)
+    const radius = 7 + ratio * 30
+    const angle = -Math.PI / 2 + index * goldenAngle
     return {
       left: 50 + Math.cos(angle) * radius,
       top: 50 + Math.sin(angle) * radius
     }
-  }))
-]
+  })
+}
 
 const distanceSquared = (left: RadarPosition, right: RadarPosition): number => (
   (left.left - right.left) ** 2 + (left.top - right.top) ** 2
@@ -57,9 +55,9 @@ export const layoutRadarItems = (items: RadarLayoutItem[]): RadarPosition[] => {
   const anchorVersion = versionScore(anchor.version)
   const maxTimeDelta = Math.max(1, ...knownTimes.map((value) => Math.abs(value - anchorTime)))
   const maxVersionDelta = Math.max(1, ...items.map((item) => Math.abs(versionScore(item.version) - anchorVersion)))
-  const available = radarSlots.slice(1)
+  const available = buildRadarSlots(items.length - 1)
   const positions: RadarPosition[] = new Array(items.length)
-  positions[anchorIndex] = radarSlots[0]
+  positions[anchorIndex] = { left: 50, top: 50 }
 
   items.forEach((item, index) => {
     if (index === anchorIndex) return

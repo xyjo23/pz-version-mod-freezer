@@ -375,7 +375,7 @@ export const listVersions = async (): Promise<FreezeVersionSummary[]> => {
         workshopProjectCount: config.WorkshopProjectCount,
         effectiveModCount: effectiveModCount(config),
         storageMode: config.StorageMode ?? 'FullCopy',
-        managerRoot: registration.managerRoot ?? config.ManagerRoot,
+        managerRoot: registration.origin === 'External' ? undefined : registration.managerRoot ?? config.ManagerRoot,
         shareInstallStatus: config.ShareInstallStatus,
         isHealthy: dependencyHealthy && existsSync(config.GamePath) && existsSync(config.CachePath)
       }
@@ -407,7 +407,9 @@ export const activateVersion = async (versionId: string): Promise<LauncherSnapsh
 
   const nextConfig: FreezeConfig = {
     ...config,
-    ManagerRoot: version.managerRoot ?? config.ManagerRoot ?? settings.managerRoot ?? path.dirname(path.dirname(freezeRoot)),
+    ManagerRoot: version.origin === 'External'
+      ? settings.managerRoot ?? freezeRoot
+      : version.managerRoot ?? config.ManagerRoot ?? settings.managerRoot ?? path.dirname(path.dirname(freezeRoot)),
     FreezeRoot: freezeRoot,
     GamePath: gamePath,
     CachePath: cachePath,
@@ -417,6 +419,7 @@ export const activateVersion = async (versionId: string): Promise<LauncherSnapsh
     LaunchArguments: frozenLaunchArguments(config.LaunchArguments, cachePath)
   }
 
+  await fs.writeFile(metadataPath, JSON.stringify(nextConfig, null, 2), 'utf8')
   if (settings.managerRoot) {
     const configPath = path.join(settings.managerRoot, 'current-freeze.json')
     if (existsSync(configPath)) await fs.copyFile(configPath, `${configPath}.launcher-backup`)
@@ -426,18 +429,11 @@ export const activateVersion = async (versionId: string): Promise<LauncherSnapsh
   return getSnapshot()
 }
 
-export const importVersion = async (): Promise<VersionImportResult> => {
-  const result = await dialog.showOpenDialog({
-    title: '导入外部 Project Zomboid 版本',
-    properties: ['openDirectory', 'multiSelections'],
-    buttonLabel: '登记所选版本'
-  })
-  if (result.canceled || !result.filePaths.length) return { canceled: true, imported: 0, skipped: 0, message: '已取消导入。' }
-
+export const importVersionPaths = async (selectedPaths: string[]): Promise<VersionImportResult> => {
   const registry = await readRegistry()
   let imported = 0
   let skipped = 0
-  for (const selectedPath of result.filePaths) {
+  for (const selectedPath of selectedPaths) {
     const candidates = existsSync(path.join(selectedPath, 'metadata', 'freeze.json'))
       ? [selectedPath]
       : await discoverManagerRoots(selectedPath)
@@ -447,7 +443,8 @@ export const importVersion = async (): Promise<VersionImportResult> => {
     }
     for (const freezeRoot of candidates) {
       try {
-        parseJson<FreezeConfig>(await fs.readFile(path.join(freezeRoot, 'metadata', 'freeze.json'), 'utf8'))
+        const importedConfig = normalizedVersionConfig(parseJson<FreezeConfig>(await fs.readFile(path.join(freezeRoot, 'metadata', 'freeze.json'), 'utf8')), freezeRoot)
+        if (!importedConfig.Version || !existsSync(importedConfig.GamePath) || !existsSync(importedConfig.CachePath)) throw new Error('导入版本缺少版本号、游戏目录或缓存目录。')
         const existed = registry.versions.some((candidate) => rootKey(candidate.freezeRoot) === rootKey(freezeRoot))
         const isManagerRoot = candidates.length > 1 || rootKey(path.dirname(freezeRoot)) === rootKey(path.join(selectedPath, 'frozen'))
         if (isManagerRoot) addManagerRoot(registry, selectedPath)
@@ -464,6 +461,16 @@ export const importVersion = async (): Promise<VersionImportResult> => {
     ? `已登记 ${imported} 个版本${skipped ? `，跳过 ${skipped} 个无效或重复目录` : ''}。`
     : `没有登记新版本；跳过 ${skipped} 个无效或重复目录。请选择包含 metadata\\freeze.json 的版本目录。`
   return { canceled: false, imported, skipped, message }
+}
+
+export const importVersion = async (): Promise<VersionImportResult> => {
+  const result = await dialog.showOpenDialog({
+    title: '导入外部 Project Zomboid 版本',
+    properties: ['openDirectory', 'multiSelections'],
+    buttonLabel: '登记所选版本'
+  })
+  if (result.canceled || !result.filePaths.length) return { canceled: true, imported: 0, skipped: 0, message: '已取消导入。' }
+  return importVersionPaths(result.filePaths)
 }
 
 export const activateSteam = async (): Promise<LauncherSnapshot> => {

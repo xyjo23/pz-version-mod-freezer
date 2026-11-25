@@ -8,6 +8,7 @@ import { app } from 'electron'
 import { analyzeCompatibility } from '../src/main/compatibility-service'
 import { analyzeIntegrity } from '../src/main/integrity-service'
 import type { CompatibilitySeverity, FreezeConfig } from '../src/shared/types'
+import { holdExclusiveFileLock, holdReadDenied } from './file-lock'
 
 const testRoot = process.env.PZ_ANALYSIS_FIXTURE_ROOT
 if (!testRoot) throw new Error('PZ_ANALYSIS_FIXTURE_ROOT is required.')
@@ -141,6 +142,34 @@ const main = async (): Promise<void> => {
   const restored = await analyzeIntegrity()
   assert.equal(restored.verdict, 'pass', restored.plainSummary)
 
+  const exclusiveLock = await holdExclusiveFileLock(changedPath)
+  let lockedFileDetected = false
+  try {
+    const locked = await analyzeIntegrity()
+    assert.equal(locked.verdict, 'blocker')
+    assert.equal(locked.summary.unreadableFiles, 1)
+    assert(locked.findings.some((finding) => finding.rule === 'FULL-FILE-READABLE' && finding.severity === 'blocker'))
+    lockedFileDetected = true
+  } finally {
+    await exclusiveLock.release()
+  }
+  const unlocked = await analyzeIntegrity()
+  assert.equal(unlocked.verdict, 'pass', unlocked.plainSummary)
+
+  const deniedRead = await holdReadDenied(changedPath)
+  let deniedReadDetected = false
+  try {
+    const denied = await analyzeIntegrity()
+    assert.equal(denied.verdict, 'blocker')
+    assert.equal(denied.summary.unreadableFiles, 1)
+    assert(denied.findings.some((finding) => finding.rule === 'FULL-FILE-READABLE' && finding.severity === 'blocker'))
+    deniedReadDetected = true
+  } finally {
+    await deniedRead.release()
+  }
+  const permissionRestored = await analyzeIntegrity()
+  assert.equal(permissionRestored.verdict, 'pass', permissionRestored.plainSummary)
+
   const gameBackupPath = `${gamePath}.round3-backup`
   const gameManifestPath = path.join(manifests, 'game.sha256.csv')
   const gameManifestOriginal = await fs.readFile(gameManifestPath, 'utf8')
@@ -185,6 +214,10 @@ const main = async (): Promise<void> => {
     baselineIntegrity: baseline.verdict,
     damagedIntegrity: damaged.summary,
     restoredIntegrity: restored.verdict,
+    lockedFileDetected,
+    unlockedIntegrity: unlocked.verdict,
+    deniedReadDetected,
+    permissionRestoredIntegrity: permissionRestored.verdict,
     emptyGameBaseline: emptyGameBaseline.verdict,
     compatibilityVerdict: compatibility.verdict,
     blockers: compatibility.summary.blockers,
