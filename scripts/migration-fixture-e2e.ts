@@ -58,6 +58,15 @@ const main = async (): Promise<void> => {
 
   const baseVersion = (await listVersions()).find((version) => path.resolve(version.freezeRoot) === path.resolve(baseRoot))
   assert(baseVersion, 'Fixture base was not registered.')
+  process.env.PZ_MIGRATION_TEST_AVAILABLE_BYTES = '1'
+  const diskFullRequest: MigrationRequest = { sourceType: 'Frozen', sourceId: baseVersion.id, mode: 'SafeCopy', label: 'Round6 Disk Full', protectSaves: false }
+  const diskFullPreview = await previewMigration(diskFullRequest)
+  delete process.env.PZ_MIGRATION_TEST_AVAILABLE_BYTES
+  assert.equal(diskFullPreview.canRun, false)
+  assert.equal(diskFullPreview.space?.sufficient, false)
+  assert(diskFullPreview.warnings.some((warning) => warning.includes('空间不足')))
+  assert(diskFullPreview.targetPath && !existsSync(diskFullPreview.targetPath))
+
   const lockedRequest: MigrationRequest = { sourceType: 'Frozen', sourceId: baseVersion.id, mode: 'SafeCopy', label: 'Round5 Locked Source', protectSaves: false }
   const lockedPreview = await previewMigration(lockedRequest)
   assert.equal(lockedPreview.canRun, true, lockedPreview.warnings.join(' | '))
@@ -66,8 +75,9 @@ const main = async (): Promise<void> => {
   try {
     const lockedResult = await executeMigration(lockedRequest)
     assert.equal(lockedResult.ok, false)
-    assert.match(lockedResult.output, /Robocopy failed|未完成的目标保留/)
-    assert(lockedPreview.targetPath && existsSync(lockedPreview.targetPath), 'Failed migration did not preserve its partial target for diagnosis.')
+    assert.match(lockedResult.output, /Robocopy failed|未完成数据已移入诊断目录/)
+    assert(lockedPreview.targetPath && !existsSync(lockedPreview.targetPath), 'Failed migration exposed a partial final version.')
+    assert((await fs.readdir(path.join(testRoot, 'incomplete'))).length > 0, 'Failed migration did not preserve its partial data for diagnosis.')
     lockedSourceBlocked = true
   } finally {
     await exclusiveLock.release()
@@ -75,8 +85,12 @@ const main = async (): Promise<void> => {
   const safeRequest: MigrationRequest = { sourceType: 'Frozen', sourceId: baseVersion.id, mode: 'SafeCopy', label: 'Round2 Full', protectSaves: true }
   const safePreview = await previewMigration(safeRequest)
   assert.equal(safePreview.canRun, true, safePreview.warnings.join(' | '))
+  const interruptedStage = path.join(testRoot, '.staging', `${path.basename(safePreview.targetPath!)}.pzvault-stage`)
+  await write(path.join(interruptedStage, '.pzvault-migration.json'), JSON.stringify({ schemaVersion: 1, phase: 'ready', targetRoot: safePreview.targetPath }))
+  await write(path.join(interruptedStage, 'partial.txt'), 'simulated interrupted process')
   const safeResult = await executeMigration(safeRequest)
   assert.equal(safeResult.ok, true, safeResult.output)
+  assert.match(safeResult.output, /上次中断的暂存数据移入诊断目录/)
   const duplicatePreview = await previewMigration(safeRequest)
   assert.equal(duplicatePreview.canRun, false)
   assert(duplicatePreview.warnings.some((warning) => warning.includes('已经存在')))
@@ -85,6 +99,8 @@ const main = async (): Promise<void> => {
   assert.equal(fullSnapshot.config?.ShareInstallStatus, undefined)
   assert.equal(fullSnapshot.config?.SharePackageID, undefined)
   assert.equal(fullSnapshot.config?.SharePackageDigest, undefined)
+  assert.equal(path.resolve(fullSnapshot.config!.FreezeRoot), path.resolve(safePreview.targetPath!))
+  assert(!fullSnapshot.config!.FreezeRoot.includes(`${path.sep}.staging${path.sep}`))
   assert(!fullSnapshot.config?.LaunchArguments?.some((argument) => argument.toLowerCase() === '-nosteam'))
   assert(fullSnapshot.config?.LaunchArguments?.some((argument) => argument === `-cachedir=${fullSnapshot.config?.CachePath}`))
   await fs.writeFile(path.join(fullSnapshot.config!.CachePath, 'options.ini'), 'fullscreen=false', 'utf8')
@@ -102,6 +118,7 @@ const main = async (): Promise<void> => {
   const thinSnapshot = await getSnapshot()
   assert.equal(thinSnapshot.config?.StorageMode, 'ThinReference')
   assert.equal(thinSnapshot.config?.BaseFreezeRoot, fullSnapshot.config?.FreezeRoot)
+  assert(thinSnapshot.config?.ReferencedMods?.every((mod) => mod.targetPath.startsWith(thinSnapshot.config!.CachePath)))
   assert(!thinSnapshot.config?.LaunchArguments?.some((argument) => argument.toLowerCase() === '-nosteam'))
   assert(thinSnapshot.config?.LaunchArguments?.some((argument) => argument === `-cachedir=${thinSnapshot.config?.CachePath}`))
   const verify = await runAction('Verify')
@@ -137,7 +154,9 @@ const main = async (): Promise<void> => {
     thinLaunchArguments: thinSnapshot.config?.LaunchArguments,
     referencedMods: thinSnapshot.config?.ReferencedMods?.length,
     duplicateTargetBlocked: true,
+    diskFullPreflightBlocked: true,
     lockedSourceBlocked,
+    interruptedStageRecovered: true,
     thinChainBlocked: true,
     missingReferenceDetected,
     verify: restoredVerify.message

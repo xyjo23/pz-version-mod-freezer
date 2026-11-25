@@ -493,6 +493,13 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .migration-storage-analysis span, .migration-storage-analysis small { color: var(--muted); font-size: 10px; }
 .migration-storage-analysis b { overflow: hidden; color: #e7f2eb; font-size: 14px; text-overflow: ellipsis; }
 .migration-storage-analysis .saved b { color: var(--accent); }
+.migration-space-check { display: flex; align-items: center; gap: 10px; margin: 12px 0; padding: 11px 12px; border: 1px solid rgba(168,230,63,.17); border-radius: 9px; background: rgba(168,230,63,.045); }
+.migration-space-check > svg { width: 18px; flex: none; color: var(--accent); }
+.migration-space-check > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.migration-space-check b { color: #e8f3ec; font-size: 12px; }
+.migration-space-check span { color: var(--muted); font-size: 10px; line-height: 1.45; }
+.migration-space-check.insufficient { border-color: rgba(233,170,72,.24); background: rgba(233,170,72,.06); }
+.migration-space-check.insufficient > svg, .migration-space-check.insufficient b { color: #e7bd78; }
 .preview-path { display: flex; flex-direction: column; gap: 5px; padding-bottom: 11px; border-bottom: 1px solid rgba(218,236,225,.08); }
 .preview-step { display: flex; align-items: center; gap: 9px; margin-top: 10px; color: #b9c4be; font-size: 12px; }
 .preview-step span { width: 21px; height: 21px; display: grid; place-items: center; border-radius: 6px; color: var(--lime); background: rgba(168,230,63,.08); font-size: 10px; }

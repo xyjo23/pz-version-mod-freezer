@@ -15,7 +15,7 @@ Status meanings:
 | Version list | real Steam plus frozen entries, details drawer, native import picker and isolated real external import/activation | PASS | user-chosen external library smoke test |
 | Quarantined version | readable details, disabled switch, explicit quarantine explanation | PASS | packaged build regression |
 | Version radar | four distinct blips, blocked activation, persisted setting and 80-entry bounded/unique layout | PASS | none for deterministic layout |
-| Version creation | source/mode/name rules; full/thin filesystem migrations; locked-source failure and partial-target retention | PASS | game-sized disk-full and forced termination |
+| Version creation | source/mode/name rules; full/thin migrations; enforced space reserve; hidden staging, atomic commit and incomplete-data recovery | PASS | sudden power loss or storage-device removal |
 | Analysis selector | packaged integrity/compatibility switching, responsibility popover and workspace replacement | PASS | none for current selector |
 | Integrity report | clean, missing, changed, added, empty-baseline, exclusive-lock and ACL-read-denied states | PASS | large real-library performance profiling |
 | Compatibility report | real Steam data plus dependency, cycle, order, tiledef and semantic-translation oracle rules | PASS | Lua/runtime and crash-log correlation |
@@ -23,6 +23,6 @@ Status meanings:
 | Help center | packaged cards, topic reset, modal isolation, Tab containment, Escape/focus restoration and small-window scrolling | PASS | screen-reader narration review |
 | Settings | switches, terminal/radar/save-protection behavior and packaged restart persistence | PASS | none for current settings set |
 | Terminal | floating entry, open state, disable removes drawer | PASS | real running/error output and pin behavior |
-| Destructive interruption | access denied and occupied files | PASS | disk full and forced shutdown remain deferred |
-| Packaged application | Setup/Portable build and unpacked native smoke | PASS | clean install, upgrade and uninstall remain deferred |
+| Destructive interruption | access denied, occupied files, low-space preflight and forced process termination before atomic commit | PASS | sudden power loss and filesystem corruption |
+| Packaged application | Setup clean install, 0.8.5→0.8.6 in-place upgrade, installed launch, silent uninstall and Portable launch | PASS | signed-binary reputation on a clean machine |
 | Project Zomboid | Steam/frozen launch and main-menu identity | DEFERRED | real-game round |

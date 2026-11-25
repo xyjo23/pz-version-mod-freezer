@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createReadStream, existsSync, promises as fs } from 'node:fs'
 import path from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import type { ActionResult, FreezeConfig, LauncherAction, MigrationPreview, MigrationRequest, SteamInstallation } from '../shared/types'
 import { readGameIdentity } from './game-identity'
@@ -29,6 +30,99 @@ const safeProfileId = (value: string): string => {
 }
 const isAsciiPath = (value: string): boolean => /^[\x20-\x7E]+$/.test(value)
 const timeStamp = (): string => new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)
+const METADATA_ALLOWANCE_BYTES = 16 * 1024 * 1024
+const MINIMUM_FREE_RESERVE_BYTES = 64 * 1024 * 1024
+const PROTECTED_ROOT_EXTENSIONS = new Set(['.ini', '.json', '.db', '.cfg', '.properties'])
+
+const byteSizeCache = new Map<string, { expiresAt: number; value: Promise<number> }>()
+
+const directoryBytes = async (root: string): Promise<number> => {
+  if (!existsSync(root)) return 0
+  let total = 0
+  const pending = [root]
+  while (pending.length) {
+    const directory = pending.pop()!
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      const entryPath = path.join(directory, entry.name)
+      if (entry.isDirectory()) pending.push(entryPath)
+      else if (entry.isFile()) total += (await fs.stat(entryPath)).size
+    }
+  }
+  return total
+}
+
+const cachedDirectoryBytes = (root: string): Promise<number> => {
+  const key = path.resolve(root).toLowerCase()
+  const cached = byteSizeCache.get(key)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
+  const value = directoryBytes(root)
+  byteSizeCache.set(key, { expiresAt: Date.now() + 60_000, value })
+  return value
+}
+
+const availableBytes = async (root: string): Promise<number> => {
+  const injected = process.env.PZ_MIGRATION_TEST_AVAILABLE_BYTES
+  if (injected !== undefined) {
+    const parsed = Number(injected)
+    if (!Number.isFinite(parsed) || parsed < 0) throw new Error('PZ_MIGRATION_TEST_AVAILABLE_BYTES 必须是非负数字。')
+    return Math.floor(parsed)
+  }
+  const stats = await fs.statfs(root, { bigint: true })
+  return Number(stats.bavail * stats.bsize)
+}
+
+const assessSpace = async (managerRoot: string, estimatedWriteBytes: number): Promise<NonNullable<MigrationPreview['space']>> => {
+  const requiredBytes = Math.max(0, Math.ceil(estimatedWriteBytes)) + METADATA_ALLOWANCE_BYTES
+  const reserveBytes = Math.max(MINIMUM_FREE_RESERVE_BYTES, Math.ceil(requiredBytes * 0.05))
+  const freeBytes = await availableBytes(managerRoot)
+  return { requiredBytes, reserveBytes, availableBytes: freeBytes, sufficient: freeBytes >= requiredBytes + reserveBytes }
+}
+
+const formatBytes = (bytes: number): string => {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let value = Math.max(0, bytes)
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit += 1 }
+  return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`
+}
+
+const mutableBackupBytes = async (sourceCache: string): Promise<number> => {
+  if (!existsSync(sourceCache)) return 0
+  let total = await cachedDirectoryBytes(path.join(sourceCache, 'Saves'))
+  for (const entry of await fs.readdir(sourceCache, { withFileTypes: true })) {
+    if (!entry.isFile() || !PROTECTED_ROOT_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) continue
+    total += (await fs.stat(path.join(sourceCache, entry.name))).size
+  }
+  return total
+}
+
+const workshopModBytes = async (workshopPath: string | null): Promise<number> => {
+  if (!workshopPath || !existsSync(workshopPath)) return 0
+  const projects = (await fs.readdir(workshopPath, { withFileTypes: true })).filter((entry) => entry.isDirectory())
+  const sizes = await Promise.all(projects.map((project) => cachedDirectoryBytes(path.join(workshopPath, project.name, 'mods'))))
+  return sizes.reduce((sum, size) => sum + size, 0)
+}
+
+const frozenSafeCopyBytes = async (sourceRoot: string, config: FreezeConfig, protectSaves: boolean): Promise<number> => {
+  const [game, cache, manifests, metadata] = await Promise.all([
+    cachedDirectoryBytes(config.GamePath || path.join(sourceRoot, 'game')),
+    cachedDirectoryBytes(config.CachePath || path.join(sourceRoot, 'cache')),
+    cachedDirectoryBytes(path.join(sourceRoot, 'manifests')),
+    cachedDirectoryBytes(path.join(sourceRoot, 'metadata'))
+  ])
+  const backup = protectSaves ? await mutableBackupBytes(config.CachePath || path.join(sourceRoot, 'cache')) : 0
+  return game + cache + manifests + metadata + backup
+}
+
+const steamSafeCopyBytes = async (steam: SteamInstallation, protectSaves: boolean): Promise<number> => {
+  const [game, cache, workshop] = await Promise.all([
+    steam.gamePath ? cachedDirectoryBytes(steam.gamePath) : 0,
+    steam.cachePath ? cachedDirectoryBytes(steam.cachePath) : 0,
+    workshopModBytes(steam.workshopPath)
+  ])
+  const backup = protectSaves && steam.cachePath ? await mutableBackupBytes(steam.cachePath) : 0
+  return game + cache + workshop + backup
+}
 
 const buildTargetPath = (managerRoot: string, version: string, buildId: string, label?: string): string => {
   const name = label?.trim()
@@ -71,14 +165,24 @@ export const previewMigration = async (request: MigrationRequest): Promise<Migra
     const targetPath = buildTargetPath(snapshot.managerRoot, steam.version, steam.buildId, request.label)
     if (existsSync(targetPath)) warnings.push('目标版本目录已经存在，请修改新版本目录名称。')
     if (!isAsciiPath(targetPath)) warnings.push('Project Zomboid 无法可靠解析含中文或其他非 ASCII 字符的 -cachedir 路径；请把版本管理目录移动到纯英文路径。')
+    let space: MigrationPreview['space']
+    if (request.label?.trim()) {
+      try {
+        space = await assessSpace(snapshot.managerRoot, await steamSafeCopyBytes(steam, request.protectSaves))
+        if (!space.sufficient) warnings.push(`目标磁盘空间不足：预计写入 ${formatBytes(space.requiredBytes)}，还需保留 ${formatBytes(space.reserveBytes)} 安全余量，当前可用 ${formatBytes(space.availableBytes)}。`)
+      } catch (error) {
+        warnings.push(`无法确认目标磁盘可用空间：${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
     return {
-      canRun: request.mode === 'SafeCopy' && Boolean(request.label?.trim()) && !existsSync(targetPath) && isAsciiPath(targetPath),
+      canRun: request.mode === 'SafeCopy' && Boolean(request.label?.trim()) && !existsSync(targetPath) && isAsciiPath(targetPath) && space?.sufficient === true,
       sourceLabel: `Steam 原版 ${steam.version}`,
       sourcePath: steam.gamePath,
       targetPath,
       mode: request.mode,
       warnings,
-      steps: migrationSteps(request)
+      steps: migrationSteps(request),
+      space
     }
   }
 
@@ -113,15 +217,32 @@ export const previewMigration = async (request: MigrationRequest): Promise<Migra
       warnings.push(`快速迁移分析失败：${error instanceof Error ? error.message : String(error)}`)
     }
   }
+  let space: MigrationPreview['space']
+  if (request.label?.trim()) {
+    try {
+      const estimatedWriteBytes = request.mode === 'FastLink'
+        ? analysis
+          ? analysis.estimatedWriteBytes + (request.protectSaves ? await mutableBackupBytes(source.config.CachePath || path.join(source.root, 'cache')) : 0)
+          : undefined
+        : await frozenSafeCopyBytes(source.root, source.config, request.protectSaves)
+      if (estimatedWriteBytes !== undefined) {
+        space = await assessSpace(snapshot.managerRoot, estimatedWriteBytes)
+        if (!space.sufficient) warnings.push(`目标磁盘空间不足：预计写入 ${formatBytes(space.requiredBytes)}，还需保留 ${formatBytes(space.reserveBytes)} 安全余量，当前可用 ${formatBytes(space.availableBytes)}。`)
+      }
+    } catch (error) {
+      warnings.push(`无法确认目标磁盘可用空间：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
   return {
-    canRun: Boolean(request.label?.trim()) && !existsSync(targetPath) && isAsciiPath(targetPath) && source.config.StorageMode !== 'ThinReference' && (request.mode !== 'FastLink' || Boolean(analysis)),
+    canRun: Boolean(request.label?.trim()) && !existsSync(targetPath) && isAsciiPath(targetPath) && source.config.StorageMode !== 'ThinReference' && (request.mode !== 'FastLink' || Boolean(analysis)) && space?.sufficient === true,
     sourceLabel: source.config.DisplayName?.trim() || `冻结版本 ${source.config.Version ?? request.sourceId}`,
     sourcePath: source.root,
     targetPath,
     mode: request.mode,
     warnings,
     steps: migrationSteps(request),
-    analysis
+    analysis,
+    space
   }
 }
 
@@ -139,9 +260,8 @@ const backupMutableData = async (managerRoot: string, sourceCache: string, sourc
   const saves = path.join(sourceCache, 'Saves')
   if (existsSync(saves)) await robocopy(saves, path.join(backupRoot, 'Saves'))
   const rootFiles = await fs.readdir(sourceCache, { withFileTypes: true })
-  const protectedExtensions = new Set(['.ini', '.json', '.db', '.cfg', '.properties'])
   for (const entry of rootFiles) {
-    if (!entry.isFile() || !protectedExtensions.has(path.extname(entry.name).toLowerCase())) continue
+    if (!entry.isFile() || !PROTECTED_ROOT_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) continue
     await fs.copyFile(path.join(sourceCache, entry.name), path.join(backupRoot, entry.name))
   }
   await fs.writeFile(path.join(backupRoot, 'backup.json'), JSON.stringify({
@@ -200,6 +320,7 @@ const writeHashManifest = async (root: string, destination: string): Promise<num
 
 const writeRegisteredConfig = async (
   managerRoot: string,
+  workingRoot: string,
   targetRoot: string,
   sourceConfig: FreezeConfig,
   mode: MigrationRequest['mode'],
@@ -226,86 +347,85 @@ const writeRegisteredConfig = async (
     SharePackageDigest: undefined,
     ...overrides
   }
-  await fs.mkdir(path.join(targetRoot, 'metadata'), { recursive: true })
-  await fs.mkdir(config.ReportPath, { recursive: true })
-  await fs.mkdir(config.BackupPath, { recursive: true })
-  await fs.writeFile(path.join(targetRoot, 'metadata', 'freeze.json'), JSON.stringify(config, null, 2), 'utf8')
-  const currentPath = path.join(managerRoot, 'current-freeze.json')
-  if (existsSync(currentPath)) await fs.copyFile(currentPath, `${currentPath}.launcher-backup`)
-  await fs.writeFile(currentPath, JSON.stringify(config, null, 2), 'utf8')
+  await fs.mkdir(path.join(workingRoot, 'metadata'), { recursive: true })
+  await fs.mkdir(path.join(workingRoot, 'reports'), { recursive: true })
+  await fs.mkdir(path.join(workingRoot, 'backups'), { recursive: true })
+  await fs.writeFile(path.join(workingRoot, 'metadata', 'freeze.json'), JSON.stringify(config, null, 2), 'utf8')
   return config
 }
 
-const migrateFromFrozen = async (request: MigrationRequest, targetRoot: string): Promise<string> => {
+const migrateFromFrozen = async (request: MigrationRequest, workingRoot: string, targetRoot: string): Promise<string> => {
   const source = await resolveFrozenSource(request.sourceId)
   if (!source) throw new Error('所选冻结版本不存在。')
-  if (existsSync(targetRoot)) throw new Error(`迁移目标已存在：${targetRoot}`)
   const managerRoot = (await getSnapshot()).managerRoot!
   const sourceCachePath = source.config.CachePath || path.join(source.root, 'cache')
   const saveBackup = request.protectSaves
     ? await backupMutableData(managerRoot, sourceCachePath, `frozen_${source.config.Version ?? request.sourceId ?? 'unknown'}`)
     : null
-  await fs.mkdir(targetRoot, { recursive: true })
-  try {
-    if (request.mode === 'SafeCopy') {
-      await robocopy(source.config.GamePath || path.join(source.root, 'game'), path.join(targetRoot, 'game'))
-      await robocopy(sourceCachePath, path.join(targetRoot, 'cache'))
-      if (existsSync(path.join(source.root, 'manifests'))) await robocopy(path.join(source.root, 'manifests'), path.join(targetRoot, 'manifests'))
-      if (existsSync(path.join(source.root, 'metadata'))) await robocopy(path.join(source.root, 'metadata'), path.join(targetRoot, 'metadata'))
-      await writeRegisteredConfig(managerRoot, targetRoot, source.config, request.mode, request.label!)
-      return `安全完整复制完成；游戏、MOD、配置与存档均为独立文件。${saveBackup ? `\n迁移前存档快照：${saveBackup}` : ''}`
-    }
-
-    if (source.config.StorageMode === 'ThinReference') throw new Error('薄版本不能继续作为基础版本，请选择完整冻结版')
-    const plan = await analyzeQuickMigration(source.root, source.config)
-    const baseIdentity = await readGameIdentity(plan.sourceGamePath, source.config.BuildID ?? 'unknown', plan.sourceCachePath)
-    if (source.config.Revision && baseIdentity.revision !== source.config.Revision) throw new Error(`基础版本 revision 已变化：预期 ${source.config.Revision}，实际 ${baseIdentity.revision ?? 'unknown'}`)
-    if (source.config.GameJarSHA256 && baseIdentity.jarSha256 !== source.config.GameJarSHA256) throw new Error('基础版本游戏 JAR 与冻结身份不一致，请先执行完整性校验')
-    const targetCache = path.join(targetRoot, 'cache')
-    const referencedMods = await materializeQuickMigration(plan, targetCache)
-    const hardLinkedModFiles = referencedMods.reduce((sum, mod) => sum + (mod.linkedFiles ?? 0), 0)
-    const copiedModFiles = referencedMods.reduce((sum, mod) => sum + (mod.copiedFiles ?? 0), 0)
-    const config = await writeRegisteredConfig(managerRoot, targetRoot, source.config, request.mode, request.label!, {
-      GamePath: plan.sourceGamePath,
-      CachePath: targetCache,
-      StorageMode: 'ThinReference',
-      BaseFreezeRoot: source.root,
-      BaseGamePath: plan.sourceGamePath,
-      BaseRevision: baseIdentity.revision ?? undefined,
-      BaseGameJarSHA256: baseIdentity.jarSha256 ?? undefined,
-      Version: baseIdentity.version,
-      FullVersion: [baseIdentity.version, baseIdentity.revision].filter(Boolean).join(' '),
-      Revision: baseIdentity.revision ?? undefined,
-      GameJarSHA256: baseIdentity.jarSha256 ?? undefined,
-      IdentityStatus: baseIdentity.status,
-      MutableCachePolicyVersion: 1,
-      ReferencedMods: referencedMods,
-      EffectiveModCount: new Set(referencedMods.flatMap((mod) => mod.modIds)).size,
-      WorkshopProjectCount: new Set(referencedMods.flatMap((mod) => mod.workshopId ? [mod.workshopId] : [])).size
-    })
-    const record = { schemaVersion: 2, createdAt: new Date().toISOString(), source: source.root, target: targetRoot, storageMode: config.StorageMode, analysis: plan.analysis, referencedMods }
-    await fs.writeFile(path.join(targetRoot, 'metadata', 'reuse-record.json'), JSON.stringify(record, null, 2), 'utf8')
-    await fs.writeFile(path.join(targetRoot, 'reports', 'quick-migration-analysis.json'), JSON.stringify(plan.analysis, null, 2), 'utf8')
-    return `快速薄版本创建完成：游戏核心引用 ${plan.analysis.sourceGameFiles} 个文件；可用 MOD ${referencedMods.length} 个根目录，硬链接 ${hardLinkedModFiles} 个文件、回退复制 ${copiedModFiles} 个；独立数据 ${plan.analysis.copiedMutableFiles} 个文件。${plan.analysis.missingModIds.length ? ` 启用上下文仍有 ${plan.analysis.missingModIds.length} 个 Mod ID 在来源中缺失，证据已写入分析报告。` : ''}基础冻结版不可移动或删除。${saveBackup ? `\n迁移前存档快照：${saveBackup}` : ''}`
-  } catch (error) {
-    throw new Error(`${error instanceof Error ? error.message : '迁移失败'}；未完成的目标保留在 ${targetRoot}，便于检查后手动清理。`)
+  await fs.mkdir(workingRoot, { recursive: true })
+  if (request.mode === 'SafeCopy') {
+    await robocopy(source.config.GamePath || path.join(source.root, 'game'), path.join(workingRoot, 'game'))
+    await robocopy(sourceCachePath, path.join(workingRoot, 'cache'))
+    if (existsSync(path.join(source.root, 'manifests'))) await robocopy(path.join(source.root, 'manifests'), path.join(workingRoot, 'manifests'))
+    if (existsSync(path.join(source.root, 'metadata'))) await robocopy(path.join(source.root, 'metadata'), path.join(workingRoot, 'metadata'))
+    await writeRegisteredConfig(managerRoot, workingRoot, targetRoot, source.config, request.mode, request.label!)
+    return `安全完整复制完成；游戏、MOD、配置与存档均为独立文件。${saveBackup ? `\n迁移前存档快照：${saveBackup}` : ''}`
   }
+
+  if (source.config.StorageMode === 'ThinReference') throw new Error('薄版本不能继续作为基础版本，请选择完整冻结版')
+  const plan = await analyzeQuickMigration(source.root, source.config)
+  const baseIdentity = await readGameIdentity(plan.sourceGamePath, source.config.BuildID ?? 'unknown', plan.sourceCachePath)
+  if (source.config.Revision && baseIdentity.revision !== source.config.Revision) throw new Error(`基础版本 revision 已变化：预期 ${source.config.Revision}，实际 ${baseIdentity.revision ?? 'unknown'}`)
+  if (source.config.GameJarSHA256 && baseIdentity.jarSha256 !== source.config.GameJarSHA256) throw new Error('基础版本游戏 JAR 与冻结身份不一致，请先执行完整性校验')
+  const workingCache = path.join(workingRoot, 'cache')
+  const targetCache = path.join(targetRoot, 'cache')
+  const materializedMods = await materializeQuickMigration(plan, workingCache)
+  const referencedMods = materializedMods.map((mod) => ({
+    ...mod,
+    targetPath: path.join(targetCache, path.relative(workingCache, mod.targetPath))
+  }))
+  const hardLinkedModFiles = referencedMods.reduce((sum, mod) => sum + (mod.linkedFiles ?? 0), 0)
+  const copiedModFiles = referencedMods.reduce((sum, mod) => sum + (mod.copiedFiles ?? 0), 0)
+  const config = await writeRegisteredConfig(managerRoot, workingRoot, targetRoot, source.config, request.mode, request.label!, {
+    GamePath: plan.sourceGamePath,
+    CachePath: targetCache,
+    StorageMode: 'ThinReference',
+    BaseFreezeRoot: source.root,
+    BaseGamePath: plan.sourceGamePath,
+    BaseRevision: baseIdentity.revision ?? undefined,
+    BaseGameJarSHA256: baseIdentity.jarSha256 ?? undefined,
+    Version: baseIdentity.version,
+    FullVersion: [baseIdentity.version, baseIdentity.revision].filter(Boolean).join(' '),
+    Revision: baseIdentity.revision ?? undefined,
+    GameJarSHA256: baseIdentity.jarSha256 ?? undefined,
+    IdentityStatus: baseIdentity.status,
+    MutableCachePolicyVersion: 1,
+    ReferencedMods: referencedMods,
+    EffectiveModCount: new Set(referencedMods.flatMap((mod) => mod.modIds)).size,
+    WorkshopProjectCount: new Set(referencedMods.flatMap((mod) => mod.workshopId ? [mod.workshopId] : [])).size
+  })
+  const record = { schemaVersion: 2, createdAt: new Date().toISOString(), source: source.root, target: targetRoot, storageMode: config.StorageMode, analysis: plan.analysis, referencedMods }
+  await fs.writeFile(path.join(workingRoot, 'metadata', 'reuse-record.json'), JSON.stringify(record, null, 2), 'utf8')
+  await fs.writeFile(path.join(workingRoot, 'reports', 'quick-migration-analysis.json'), JSON.stringify(plan.analysis, null, 2), 'utf8')
+  return `快速薄版本创建完成：游戏核心引用 ${plan.analysis.sourceGameFiles} 个文件；可用 MOD ${referencedMods.length} 个根目录，硬链接 ${hardLinkedModFiles} 个文件、回退复制 ${copiedModFiles} 个；独立数据 ${plan.analysis.copiedMutableFiles} 个文件。${plan.analysis.missingModIds.length ? ` 启用上下文仍有 ${plan.analysis.missingModIds.length} 个 Mod ID 在来源中缺失，证据已写入分析报告。` : ''}基础冻结版不可移动或删除。${saveBackup ? `\n迁移前存档快照：${saveBackup}` : ''}`
 }
 
-const migrateFromSteam = async (request: MigrationRequest, steam: SteamInstallation, targetRoot: string, managerRoot: string): Promise<string> => {
+const migrateFromSteam = async (request: MigrationRequest, steam: SteamInstallation, workingRoot: string, targetRoot: string, managerRoot: string): Promise<string> => {
   if (request.mode !== 'SafeCopy') throw new Error('Steam 原版不能作为薄版本基础，请先创建完整冻结版。')
   if (!steam.gamePath || !steam.cachePath || !steam.manifestPath) throw new Error('Steam 来源信息不完整。')
-  if (existsSync(targetRoot)) throw new Error(`目标目录已经存在：${targetRoot}`)
+  const gameWorking = path.join(workingRoot, 'game')
+  const cacheWorking = path.join(workingRoot, 'cache')
+  const manifestsWorking = path.join(workingRoot, 'manifests')
+  const metadataWorking = path.join(workingRoot, 'metadata')
   const gameTarget = path.join(targetRoot, 'game')
   const cacheTarget = path.join(targetRoot, 'cache')
   const manifestsTarget = path.join(targetRoot, 'manifests')
-  const metadataTarget = path.join(targetRoot, 'metadata')
   const saveBackup = request.protectSaves
     ? await backupMutableData(managerRoot, steam.cachePath, `steam_${steam.version}_${steam.buildId}`)
     : null
-  await robocopy(steam.gamePath, gameTarget)
-  if (existsSync(steam.cachePath)) await robocopy(steam.cachePath, cacheTarget)
-  else await fs.mkdir(cacheTarget, { recursive: true })
+  await robocopy(steam.gamePath, gameWorking)
+  if (existsSync(steam.cachePath)) await robocopy(steam.cachePath, cacheWorking)
+  else await fs.mkdir(cacheWorking, { recursive: true })
 
   let localizedMods = 0
   const workshopPath = steam.workshopPath
@@ -317,22 +437,22 @@ const migrateFromSteam = async (request: MigrationRequest, steam: SteamInstallat
     if (!existsSync(modsRoot)) continue
     for (const modRoot of (await fs.readdir(modsRoot, { withFileTypes: true })).filter((entry) => entry.isDirectory())) {
       const destinationName = safeName(`WS${project.name}__${modRoot.name}`)
-      await robocopy(path.join(modsRoot, modRoot.name), path.join(cacheTarget, 'mods', destinationName))
+      await robocopy(path.join(modsRoot, modRoot.name), path.join(cacheWorking, 'mods', destinationName))
       localizedMods += 1
     }
   }
 
-  await fs.mkdir(metadataTarget, { recursive: true })
-  await fs.copyFile(steam.manifestPath, path.join(metadataTarget, 'appmanifest_108600.original.acf'))
+  await fs.mkdir(metadataWorking, { recursive: true })
+  await fs.copyFile(steam.manifestPath, path.join(metadataWorking, 'appmanifest_108600.original.acf'))
   const versionFile = path.join(steam.cachePath, 'version.txt')
-  if (existsSync(versionFile)) await fs.copyFile(versionFile, path.join(metadataTarget, 'game-version.txt'))
-  const frozenIdentity = await readGameIdentity(gameTarget, steam.buildId, cacheTarget)
+  if (existsSync(versionFile)) await fs.copyFile(versionFile, path.join(metadataWorking, 'game-version.txt'))
+  const frozenIdentity = await readGameIdentity(gameWorking, steam.buildId, cacheWorking)
   if (frozenIdentity.version !== steam.version || frozenIdentity.revision !== steam.revision || frozenIdentity.jarSha256 !== steam.gameJarSha256) {
     throw new Error(`冻结后身份复核失败：来源 ${steam.version}/${steam.revision ?? 'unknown'}，目标 ${frozenIdentity.version}/${frozenIdentity.revision ?? 'unknown'}`)
   }
-  await fs.writeFile(path.join(metadataTarget, 'game-identity.json'), JSON.stringify(frozenIdentity, null, 2), 'utf8')
-  const gameFiles = await writeHashManifest(gameTarget, path.join(manifestsTarget, 'game.sha256.csv'))
-  const modFiles = await writeHashManifest(path.join(cacheTarget, 'mods'), path.join(manifestsTarget, 'mods.sha256.csv'))
+  await fs.writeFile(path.join(metadataWorking, 'game-identity.json'), JSON.stringify(frozenIdentity, null, 2), 'utf8')
+  const gameFiles = await writeHashManifest(gameWorking, path.join(manifestsWorking, 'game.sha256.csv'))
+  const modFiles = await writeHashManifest(path.join(cacheWorking, 'mods'), path.join(manifestsWorking, 'mods.sha256.csv'))
   const config: FreezeConfig & Record<string, unknown> = {
     ManagerRoot: managerRoot,
     FreezeRoot: targetRoot,
@@ -356,10 +476,46 @@ const migrateFromSteam = async (request: MigrationRequest, steam: SteamInstallat
     SourceCache: steam.cachePath,
     SourceSteamManifest: steam.manifestPath
   }
-  await writeRegisteredConfig(managerRoot, targetRoot, config, request.mode, request.label!)
+  await writeRegisteredConfig(managerRoot, workingRoot, targetRoot, config, request.mode, request.label!)
   const report = { schemaVersion: 1, createdAt: new Date().toISOString(), source: 'Steam', gameFiles, modFiles, localizedMods, saveProtection: request.protectSaves }
-  await fs.writeFile(path.join(targetRoot, 'reports', 'creation-summary.json'), JSON.stringify(report, null, 2), 'utf8')
+  await fs.writeFile(path.join(workingRoot, 'reports', 'creation-summary.json'), JSON.stringify(report, null, 2), 'utf8')
   return `Steam 原版安全复制完成。游戏文件 ${gameFiles} 个，MOD 文件 ${modFiles} 个，本地化 MOD 根目录 ${localizedMods} 个。\n新版本目录：${targetRoot}${saveBackup ? `\n迁移前存档快照：${saveBackup}` : ''}`
+}
+
+const stagingRootFor = (managerRoot: string, targetRoot: string): string => path.join(managerRoot, '.staging', `${path.basename(targetRoot)}.pzvault-stage`)
+
+const archiveIncomplete = async (managerRoot: string, workingRoot: string): Promise<string | null> => {
+  if (!existsSync(workingRoot)) return null
+  const incompleteRoot = path.join(managerRoot, 'incomplete')
+  await fs.mkdir(incompleteRoot, { recursive: true })
+  let destination = path.join(incompleteRoot, `${path.basename(workingRoot, '.pzvault-stage')}_${timeStamp()}`)
+  let suffix = 1
+  while (existsSync(destination)) {
+    destination = path.join(incompleteRoot, `${path.basename(workingRoot, '.pzvault-stage')}_${timeStamp()}_${suffix}`)
+    suffix += 1
+  }
+  await fs.rename(workingRoot, destination)
+  return destination
+}
+
+const writeTransaction = async (workingRoot: string, targetRoot: string, phase: 'copying' | 'ready'): Promise<void> => {
+  await fs.mkdir(workingRoot, { recursive: true })
+  await fs.writeFile(path.join(workingRoot, '.pzvault-migration.json'), JSON.stringify({
+    schemaVersion: 1,
+    phase,
+    targetRoot,
+    updatedAt: new Date().toISOString()
+  }, null, 2), 'utf8')
+}
+
+const pauseBeforeAtomicCommitForTest = async (): Promise<void> => {
+  const readyFile = process.env.PZ_MIGRATION_TEST_READY_FILE
+  if (readyFile) {
+    await fs.mkdir(path.dirname(readyFile), { recursive: true })
+    await fs.writeFile(readyFile, new Date().toISOString(), 'utf8')
+  }
+  const pauseMs = Number(process.env.PZ_MIGRATION_TEST_PAUSE_BEFORE_COMMIT_MS ?? 0)
+  if (Number.isFinite(pauseMs) && pauseMs > 0) await delay(Math.min(pauseMs, 10 * 60_000))
 }
 
 export const executeMigration = async (request: MigrationRequest): Promise<ActionResult> => {
@@ -369,15 +525,45 @@ export const executeMigration = async (request: MigrationRequest): Promise<Actio
   if (!preview.canRun || !preview.targetPath) {
     return { ok: false, action, message: '迁移条件未满足。', output: preview.warnings.join('\n'), finishedAt: new Date().toISOString() }
   }
+  let workingRoot: string | null = null
+  let managerRoot: string | null = null
+  let committed = false
   try {
     const snapshot = await getSnapshot()
     if (!snapshot.managerRoot) throw new Error('请先选择版本管理目录。')
+    managerRoot = snapshot.managerRoot
+    if (existsSync(preview.targetPath)) throw new Error(`目标目录已经存在：${preview.targetPath}`)
+    workingRoot = stagingRootFor(managerRoot, preview.targetPath)
+    const recovered = await archiveIncomplete(managerRoot, workingRoot)
+    await writeTransaction(workingRoot, preview.targetPath, 'copying')
     const output = request.sourceType === 'Steam'
-      ? await migrateFromSteam(request, await detectSteamInstallation(), preview.targetPath, snapshot.managerRoot)
-      : await migrateFromFrozen(request, preview.targetPath)
+      ? await migrateFromSteam(request, await detectSteamInstallation(), workingRoot, preview.targetPath, managerRoot)
+      : await migrateFromFrozen(request, workingRoot, preview.targetPath)
+    await writeTransaction(workingRoot, preview.targetPath, 'ready')
+    await pauseBeforeAtomicCommitForTest()
+    await fs.rm(path.join(workingRoot, '.pzvault-migration.json'), { force: true })
+    await fs.mkdir(path.dirname(preview.targetPath), { recursive: true })
+    await fs.rename(workingRoot, preview.targetPath)
+    committed = true
     await activateVersion(path.basename(preview.targetPath))
-    return { ok: true, action, message: `版本迁移完成，用时 ${Math.round((Date.now() - started) / 1000)} 秒。`, output, finishedAt: new Date().toISOString() }
+    return {
+      ok: true,
+      action,
+      message: `版本迁移完成，用时 ${Math.round((Date.now() - started) / 1000)} 秒。`,
+      output: `${output}${recovered ? `\n已将上次中断的暂存数据移入诊断目录：${recovered}` : ''}`,
+      finishedAt: new Date().toISOString()
+    }
   } catch (error) {
-    return { ok: false, action, message: '版本迁移失败。', output: error instanceof Error ? error.message : String(error), finishedAt: new Date().toISOString() }
+    const detail = error instanceof Error ? error.message : String(error)
+    if (committed) {
+      return { ok: false, action, message: '版本已完整提交，但自动切换失败。', output: `${detail}\n完整版本保留在 ${preview.targetPath}，可从版本管理页面手动切换。`, finishedAt: new Date().toISOString() }
+    }
+    let archived: string | null = null
+    if (managerRoot && workingRoot) {
+      try { archived = await archiveIncomplete(managerRoot, workingRoot) } catch (archiveError) {
+        return { ok: false, action, message: '版本迁移失败，且暂存数据归档失败。', output: `${detail}\n归档失败：${archiveError instanceof Error ? archiveError.message : String(archiveError)}\n暂存目录：${workingRoot}`, finishedAt: new Date().toISOString() }
+      }
+    }
+    return { ok: false, action, message: '版本迁移失败。', output: `${detail}${archived ? `\n未完成数据已移入诊断目录：${archived}` : ''}`, finishedAt: new Date().toISOString() }
   }
 }

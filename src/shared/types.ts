@@ -91,6 +91,12 @@ export type MigrationPreview = {
   warnings: string[]
   steps: string[]
   analysis?: MigrationStorageAnalysis
+  space?: {
+    requiredBytes: number
+    reserveBytes: number
+    availableBytes: number
+    sufficient: boolean
+  }
 }
 
 export type FreezeConfig = {
