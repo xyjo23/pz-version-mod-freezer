@@ -54,8 +54,27 @@ export const installBrowserPreviewApi = (): void => {
     installSharePackage: async () => ({ ok: true, message: '共享清单已安装为新的受管版本。', output: '预览模式', installedRoot: 'E:\\PZVault\\frozen\\preview-share' }),
     activateVersion: async () => previewSnapshot,
     activateSteam: async () => ({ ...previewSnapshot, activeSource: 'Steam' }),
-    previewMigration: async (request) => ({ canRun: !(request.sourceType === 'Steam' && request.mode === 'FastLink'), sourceLabel: request.sourceType === 'Steam' ? 'Steam 原版 42.21.0' : '冻结版本 42.12.3', sourcePath: request.sourceType === 'Steam' ? 'E:\\apps\\games\\steamapps\\common\\ProjectZomboid' : previewSnapshot.config!.FreezeRoot, targetPath: 'D:\\PZ_Freeze_Manager\\frozen\\B42.21.0_build25485521', mode: request.mode, warnings: request.mode === 'FastLink' ? ['实验性快速模式仅复用只读游戏与 MOD；存档和配置保持独立。'] : [], steps: ['验证来源与目标', '迁移游戏、MOD 与缓存', '登记新版本'] }),
-    executeMigration: async (request) => ({ ok: true, action: request.mode === 'SafeCopy' ? 'MigrateSafe' : 'MigrateFast', message: '版本迁移完成。', output: '[PASS] Browser preview migration completed.', finishedAt: new Date().toISOString() }),
+    previewMigration: async (request) => {
+      const hasLabel = Boolean(request.label?.trim())
+      const steamFastLink = request.sourceType === 'Steam' && request.mode === 'FastLink'
+      return {
+        canRun: hasLabel && !steamFastLink,
+        sourceLabel: request.sourceType === 'Steam' ? 'Steam 原版 42.22.2' : '冻结版本 42.12.3',
+        sourcePath: request.sourceType === 'Steam' ? 'E:\\apps\\games\\steamapps\\common\\ProjectZomboid' : previewSnapshot.config!.FreezeRoot,
+        targetPath: 'D:\\PZ_Freeze_Manager\\frozen\\B42.22.2_build26486631',
+        mode: request.mode,
+        warnings: [
+          ...(!hasLabel ? ['请为新版本填写一个便于识别的名称；版本号只作为技术信息显示。'] : []),
+          ...(steamFastLink ? ['Steam 原版会自动更新，不能作为薄版本的稳定基础；请先创建完整冻结版。'] : [])
+        ],
+        steps: ['验证来源与目标', '迁移游戏、MOD 与缓存', '登记新版本']
+      }
+    },
+    executeMigration: async (request) => {
+      const hasLabel = Boolean(request.label?.trim())
+      const blocked = !hasLabel || (request.sourceType === 'Steam' && request.mode === 'FastLink')
+      return { ok: !blocked, action: request.mode === 'SafeCopy' ? 'MigrateSafe' : 'MigrateFast', message: blocked ? '迁移条件未满足。' : '版本迁移完成。', output: blocked ? '请检查版本名称、来源和迁移模式。' : '[PASS] Browser preview migration completed.', finishedAt: new Date().toISOString() }
+    },
     chooseManagerRoot: async () => previewSnapshot,
     runAction: async (action) => ({
       ok: true,

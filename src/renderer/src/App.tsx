@@ -38,6 +38,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { ActionResult, AnalysisConfidence, CompatibilityReport, CompatibilitySeverity, FileOverlapClassification, FreezeVersionSummary, IntegrityReport, LauncherAction, LauncherSnapshot, MigrationMode, MigrationPreview, MigrationSourceType, ModSummary, SharePackageInspection, SteamInstallation } from '../../shared/types'
 import { VaultMark } from './VaultMark'
+import { layoutRadarItems } from './radar-layout'
 
 type Notice = { kind: 'success' | 'error'; text: string } | null
 type AppView = 'console' | 'versions' | 'maintenance' | 'help' | 'settings'
@@ -218,11 +219,6 @@ const VersionName = ({ name, variant = 'list' }: { name: string; variant?: 'list
   return <div className={`version-name-wrap ${variant === 'hero' ? 'hero-version-name' : ''}`} ref={rootRef}>{isLong ? <button className="version-name" onClick={(event) => { event.stopPropagation(); setRevealed((value) => !value) }}>{shortened}</button> : <span className="version-name">{name}</span>}{revealed && isLong && <div className="version-name-full">{name}</div>}</div>
 }
 
-const versionScore = (value: string): number => {
-  const parts = value.match(/\d+/g)?.slice(0, 3).map(Number) ?? [0]
-  return (parts[0] ?? 0) * 10000 + (parts[1] ?? 0) * 100 + (parts[2] ?? 0)
-}
-
 type VersionRadarProps = {
   versions: FreezeVersionSummary[]
   steam: SteamInstallation | null
@@ -237,11 +233,7 @@ const VersionRadar = ({ versions, steam, activeSource, onFrozenActivate, onSteam
     if (!steam?.detected) return frozen
     return [{ id: 'steam-original', kind: 'Steam' as const, name: 'Steam 原版', version: steam.version, created: steam.installedAt ?? undefined, current: activeSource === 'Steam', healthy: true }, ...frozen]
   }, [activeSource, steam, versions])
-  const current = items.find((item) => item.current) ?? items[0]
-  const currentTime = current?.created ? new Date(current.created).getTime() : Date.now()
-  const currentVersion = versionScore(current?.version ?? '0')
-  const maxTimeDelta = Math.max(1, ...items.map((item) => Math.abs((item.created ? new Date(item.created).getTime() : currentTime) - currentTime)))
-  const maxVersionDelta = Math.max(1, ...items.map((item) => Math.abs(versionScore(item.version) - currentVersion)))
+  const positions = useMemo(() => layoutRadarItems(items.map((item) => ({ key: `${item.kind}-${item.id}`, version: item.version, created: item.created, current: item.current }))), [items])
 
   return <section className="version-radar-panel enter delay-1">
     <div className="version-radar" role="group" aria-label="版本相对雷达，双击光点切换版本">
@@ -250,16 +242,15 @@ const VersionRadar = ({ versions, steam, activeSource, onFrozenActivate, onSteam
       <div className="radar-axis vertical"><span>高版本</span><i /><span>低版本</span></div>
       <div className="radar-sweep" />
       {items.map((item, index) => {
-        const timeDelta = (item.created ? new Date(item.created).getTime() : currentTime) - currentTime
-        const versionDelta = versionScore(item.version) - currentVersion
-        const left = item.current ? 50 : 50 + (timeDelta / maxTimeDelta) * 41
-        const top = item.current ? 50 : 50 - (versionDelta / maxVersionDelta) * 37
+        const position = positions[index] ?? { left: 50, top: 50 }
         return <button
           key={`${item.kind}-${item.id}`}
           className={`radar-blip ${item.current ? 'current' : ''} ${item.kind === 'Steam' ? 'steam' : ''} ${item.healthy ? '' : 'unhealthy'}`}
-          style={{ left: `${left}%`, top: `${top}%`, animationDelay: `${index * 180}ms` }}
-          onDoubleClick={() => item.kind === 'Steam' ? onSteamActivate() : onFrozenActivate(item.id)}
-          aria-label={`${item.name}，版本 ${item.version}，双击切换`}
+          style={{ left: `${position.left}%`, top: `${position.top}%`, animationDelay: `${index * 180}ms` }}
+          aria-disabled={!item.healthy}
+          onDoubleClick={() => { if (item.healthy) item.kind === 'Steam' ? onSteamActivate() : onFrozenActivate(item.id) }}
+          onKeyDown={(event) => { if (event.key === 'Enter' && item.healthy) item.kind === 'Steam' ? onSteamActivate() : onFrozenActivate(item.id) }}
+          aria-label={`${item.name}，版本 ${item.version}，${item.healthy ? '双击或按 Enter 切换' : '当前版本不可切换'}`}
         ><span className="radar-dot" /><span className="radar-tooltip"><b>{item.name}</b><small>版本 {item.version}</small><em>{item.current ? '当前中心' : formatDate(item.created)}</em></span></button>
       })}
       {!items.length && <div className="radar-no-versions">尚无可扫描版本</div>}
@@ -269,23 +260,16 @@ const VersionRadar = ({ versions, steam, activeSource, onFrozenActivate, onSteam
 
 const ConsoleVersionRadar = ({ versions, steam, activeSource, onFrozenActivate, onSteamActivate }: VersionRadarProps): React.JSX.Element => {
   const items = useMemo(() => {
-    const frozen = versions.map((version) => ({ id: version.id, kind: 'Frozen' as const, name: version.name, version: version.version, created: version.created, current: version.isActive }))
+    const frozen = versions.map((version) => ({ id: version.id, kind: 'Frozen' as const, name: version.name, version: version.version, created: version.created, current: version.isActive, healthy: version.isHealthy }))
     return steam?.detected
-      ? [{ id: 'steam-original', kind: 'Steam' as const, name: 'Steam 原版', version: steam.version, created: steam.installedAt ?? undefined, current: activeSource === 'Steam' }, ...frozen]
+      ? [{ id: 'steam-original', kind: 'Steam' as const, name: 'Steam 原版', version: steam.version, created: steam.installedAt ?? undefined, current: activeSource === 'Steam', healthy: true }, ...frozen]
       : frozen
   }, [activeSource, steam, versions])
-  const current = items.find((item) => item.current) ?? items[0]
-  const currentTime = current?.created ? new Date(current.created).getTime() : Date.now()
-  const currentVersion = versionScore(current?.version ?? '0')
-  const maxTimeDelta = Math.max(1, ...items.map((item) => Math.abs((item.created ? new Date(item.created).getTime() : currentTime) - currentTime)))
-  const maxVersionDelta = Math.max(1, ...items.map((item) => Math.abs(versionScore(item.version) - currentVersion)))
+  const positions = useMemo(() => layoutRadarItems(items.map((item) => ({ key: `${item.kind}-${item.id}`, version: item.version, created: item.created, current: item.current }))), [items])
   return <div className="console-radar-visual"><div className="console-radar-top"><span>VERSION RADAR</span><b>{items.length} 个版本</b></div><div className="console-radar"><div className="radar-grid-ring ring-a" /><div className="radar-grid-ring ring-b" /><div className="radar-axis horizontal"><i /></div><div className="radar-axis vertical"><i /></div><div className="radar-sweep" />{items.map((item, index) => {
-    const timeDelta = (item.created ? new Date(item.created).getTime() : currentTime) - currentTime
-    const versionDelta = versionScore(item.version) - currentVersion
-    const left = item.current ? 50 : 50 + (timeDelta / maxTimeDelta) * 40
-    const top = item.current ? 50 : 50 - (versionDelta / maxVersionDelta) * 36
-    return <button key={`${item.kind}-${item.id}`} className={`radar-blip ${item.current ? 'current' : ''} ${item.kind === 'Steam' ? 'steam' : ''}`} style={{ left: `${left}%`, top: `${top}%`, animationDelay: `${index * 180}ms` }} onDoubleClick={() => item.kind === 'Steam' ? onSteamActivate() : onFrozenActivate(item.id)} aria-label={`${item.name}，双击切换`}><span className="radar-dot" /><span className="radar-tooltip"><b>{item.name}</b><small>版本 {item.version}</small><em>{item.current ? '当前中心' : formatDate(item.created)}</em></span></button>
-  })}</div><small className="console-radar-hint">悬停识别 · 双击切换</small></div>
+    const position = positions[index] ?? { left: 50, top: 50 }
+    return <button key={`${item.kind}-${item.id}`} className={`radar-blip ${item.current ? 'current' : ''} ${item.kind === 'Steam' ? 'steam' : ''} ${item.healthy ? '' : 'unhealthy'}`} style={{ left: `${position.left}%`, top: `${position.top}%`, animationDelay: `${index * 180}ms` }} aria-disabled={!item.healthy} onDoubleClick={() => { if (item.healthy) item.kind === 'Steam' ? onSteamActivate() : onFrozenActivate(item.id) }} onKeyDown={(event) => { if (event.key === 'Enter' && item.healthy) item.kind === 'Steam' ? onSteamActivate() : onFrozenActivate(item.id) }} aria-label={`${item.name}，${item.healthy ? '双击或按 Enter 切换' : '当前版本不可切换'}`}><span className="radar-dot" /><span className="radar-tooltip"><b>{item.name}</b><small>版本 {item.version}</small><em>{item.current ? '当前中心' : item.healthy ? formatDate(item.created) : '不可切换'}</em></span></button>
+  })}</div><small className="console-radar-hint">悬停识别 · 双击或按 Enter 切换</small></div>
 }
 
 const compatibilityLabels: Record<CompatibilitySeverity, string> = {
@@ -420,6 +404,7 @@ export const App = (): React.JSX.Element => {
   const [activeView, setActiveView] = useState<AppView>(['versions', 'maintenance', 'help', 'settings'].includes(previewView ?? '') ? previewView as AppView : 'console')
   const previewHelpTopic = previewMode?.get('helpTopic') as HelpTopicId | null
   const [activeHelpTopic, setActiveHelpTopic] = useState<HelpTopicId | null>(() => helpTutorials.some((topic) => topic.id === previewHelpTopic) ? previewHelpTopic : null)
+  const helpScrollRef = useRef<HTMLDivElement>(null)
   const [isDrawerOpen, setDrawerOpen] = useState(previewMode?.get('drawer') === 'open')
   const [detailSelection, setDetailSelection] = useState<VersionDetailSelection | null>(null)
   const [isModsDrawerOpen, setModsDrawerOpen] = useState(previewMode?.get('mods') === 'open')
@@ -462,6 +447,9 @@ export const App = (): React.JSX.Element => {
     const timer = window.setTimeout(() => setNotice(null), 3800)
     return () => window.clearTimeout(timer)
   }, [notice])
+  useEffect(() => {
+    if (activeHelpTopic) helpScrollRef.current?.scrollTo({ top: 0, behavior: 'auto' })
+  }, [activeHelpTopic])
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
@@ -911,11 +899,11 @@ export const App = (): React.JSX.Element => {
           <aside className="help-modal-nav">
             <div className="help-modal-brand"><BookOpen /><div><span>使用教程</span><b>生存者手册</b></div></div>
             <nav aria-label="教程主题">{helpTutorials.map((topic) => <button className={topic.id === selectedHelpTutorial.id ? 'active' : ''} key={topic.id} onClick={() => setActiveHelpTopic(topic.id)}><span>{topic.number}</span><div><b>{topic.title}</b><small>{topic.eyebrow}</small></div><ChevronRight /></button>)}</nav>
-            <div className="help-modal-version"><span>当前教程版本</span><b>v0.7 · B42</b></div>
+            <div className="help-modal-version"><span>当前教程版本</span><b>v0.8 · B42</b></div>
           </aside>
           <div className="help-modal-main">
             <header className="help-modal-header"><div><span className="eyebrow">{selectedHelpTutorial.eyebrow}</span><h2 id="help-tutorial-title">{selectedHelpTutorial.title}</h2><p>{selectedHelpTutorial.summary}</p></div><button className="icon-button" onClick={() => setActiveHelpTopic(null)} aria-label="关闭教程"><X /></button></header>
-            <div className="help-modal-scroll">
+            <div className="help-modal-scroll" ref={helpScrollRef} tabIndex={0}>
               <section className="tutorial-prerequisites"><div className="tutorial-section-icon"><ClipboardCheck /></div><div><h3>开始之前</h3><ul>{selectedHelpTutorial.prerequisites.map((item) => <li key={item}><CheckCircle2 />{item}</li>)}</ul></div></section>
               {selectedHelpTutorial.sections.map((section, sectionIndex) => <section className="tutorial-section" key={section.title}><div className="tutorial-section-heading"><span>{String(sectionIndex + 1).padStart(2, '0')}</span><div><h3>{section.title}</h3><p>{section.intro}</p></div></div><ol>{section.steps.map((step, stepIndex) => <li key={step.title}><span>{stepIndex + 1}</span><div><b>{step.title}</b><p>{step.detail}</p></div></li>)}</ol></section>)}
               <section className="tutorial-result"><CheckCircle2 /><div><span>完成标准</span><p>{selectedHelpTutorial.result}</p></div></section>

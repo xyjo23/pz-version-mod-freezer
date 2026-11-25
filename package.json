@@ -1,7 +1,7 @@
 {
   "name": "pz-vault-launcher",
   "productName": "Project Zomboid Vault",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "A modern desktop launcher for isolated Project Zomboid environments.",
   "main": "./out/main/index.js",
   "private": true,
@@ -11,6 +11,8 @@
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit",
     "test:share": "node --experimental-strip-types --test src/main/share-package-format.test.ts src/main/share-package-fingerprint.test.ts src/main/share-package-match.test.ts src/main/share-package-roundtrip.test.ts",
+    "test:radar": "node --experimental-strip-types --test src/renderer/src/radar-layout.test.ts",
+    "test:qa": "pnpm test:share && pnpm test:radar && pnpm typecheck",
     "preview": "electron-vite preview",
     "dist:win": "electron-vite build && electron-builder --win --x64"
   },
