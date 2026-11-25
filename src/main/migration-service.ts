@@ -221,6 +221,9 @@ const writeRegisteredConfig = async (
     MigrationMode: mode,
     SourceFreezeRoot: sourceConfig.FreezeRoot,
     StorageMode: 'FullCopy',
+    ShareInstallStatus: undefined,
+    SharePackageID: undefined,
+    SharePackageDigest: undefined,
     ...overrides
   }
   await fs.mkdir(path.join(targetRoot, 'metadata'), { recursive: true })

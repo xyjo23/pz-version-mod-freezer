@@ -32,6 +32,29 @@ const loadEnvelope = async (filePath: string): Promise<SharePackageEnvelopeV1> =
   return parseSharePackage(await fs.readFile(filePath))
 }
 
+const alreadyInstalledFinding = async (envelope: SharePackageEnvelopeV1): Promise<SharePackageFinding | null> => {
+  for (const version of await listVersions()) {
+    try {
+      const config = JSON.parse(await fs.readFile(path.join(version.freezeRoot, 'metadata', 'freeze.json'), 'utf8')) as {
+        ShareInstallStatus?: string
+        SharePackageID?: string
+        SharePackageDigest?: string
+      }
+      if (config.ShareInstallStatus !== 'Verified' || config.SharePackageID !== envelope.manifest.packageId) continue
+      return {
+        severity: 'blocker',
+        title: '这个共享包已经安装',
+        detail: config.SharePackageDigest === envelope.integrity.digest
+          ? `受管版本“${version.name}”已经通过同一 Package ID 和摘要的安装复核，不会重复复制。`
+          : `受管版本“${version.name}”使用了相同 Package ID，但摘要不同；请让制作者重新生成具有新 Package ID 的共享包。`
+      }
+    } catch {
+      // Damaged registrations are reported by normal version/integrity checks and are not proof of a completed install.
+    }
+  }
+  return null
+}
+
 const toShareMod = async (record: CompatibilityModRecord, fingerprints: Map<string, Promise<DirectoryFingerprint>>): Promise<SharePackageMod> => {
   const normalizedRoot = path.resolve(record.rootPath).toLowerCase()
   let fingerprint = fingerprints.get(normalizedRoot)
@@ -59,7 +82,7 @@ const toShareMod = async (record: CompatibilityModRecord, fingerprints: Map<stri
   }
 }
 
-export const createSharePackage = async (): Promise<SharePackageCreateResult> => {
+const buildSharePackage = async (): Promise<{ envelope: SharePackageEnvelopeV1; modCount: number; title: string }> => {
   const integrity = await analyzeIntegrity({ submitSteamValidation: false })
   if (integrity.verdict === 'blocker') throw new Error(`完整性分析存在阻断项：${integrity.plainSummary}`)
   const compatibility = await analyzeCompatibility()
@@ -120,6 +143,25 @@ export const createSharePackage = async (): Promise<SharePackageCreateResult> =>
   }
   if (!snapshot.managerRoot) warnings.push('制作端没有设置版本管理目录；这不影响清单本身，但接收端安装前必须设置。')
   const envelope = createShareEnvelope(manifest)
+  return { envelope, modCount: mods.length, title }
+}
+
+export const createSharePackageAt = async (filePath: string): Promise<SharePackageCreateResult> => {
+  const { envelope, modCount } = await buildSharePackage()
+  await fs.mkdir(path.dirname(filePath), { recursive: true })
+  await fs.writeFile(filePath, serializeSharePackage(envelope), 'utf8')
+  return {
+    canceled: false,
+    ok: true,
+    filePath,
+    packageId: envelope.manifest.packageId,
+    digest: envelope.integrity.digest,
+    message: `共享清单已生成：${modCount} 个启用 MOD，零嵌入文件。`
+  }
+}
+
+export const createSharePackage = async (): Promise<SharePackageCreateResult> => {
+  const { envelope, modCount, title } = await buildSharePackage()
   const result = await dialog.showSaveDialog({
     title: '制作 PZ 共享清单包',
     defaultPath: `${title}.pzshare`,
@@ -132,13 +174,13 @@ export const createSharePackage = async (): Promise<SharePackageCreateResult> =>
     canceled: false,
     ok: true,
     filePath: result.filePath,
-    packageId: manifest.packageId,
+    packageId: envelope.manifest.packageId,
     digest: envelope.integrity.digest,
-    message: `共享清单已生成：${mods.length} 个启用 MOD，零嵌入文件。`
+    message: `共享清单已生成：${modCount} 个启用 MOD，零嵌入文件。`
   }
 }
 
-const inspectAt = async (filePath: string): Promise<SharePackageInspection> => {
+export const inspectSharePackageAt = async (filePath: string): Promise<SharePackageInspection> => {
   let envelope: SharePackageEnvelopeV1
   try {
     envelope = await loadEnvelope(filePath)
@@ -160,6 +202,8 @@ const inspectAt = async (filePath: string): Promise<SharePackageInspection> => {
 
   try {
     const snapshot = await getSnapshot()
+    const installedFinding = await alreadyInstalledFinding(envelope)
+    if (installedFinding) findings.push(installedFinding)
     const integrity = await analyzeIntegrity({ submitSteamValidation: false })
     const compatibility = await analyzeCompatibility()
     const fingerprintCache = new Map<string, Promise<DirectoryFingerprint>>()
@@ -227,11 +271,13 @@ export const inspectSharePackage = async (): Promise<SharePackageInspection> => 
       gameVersion: null, buildId: null, modCount: 0, workshopCount: 0, digest: null, trust: 'invalid', rights: 'unknown', findings: [], message: '已取消接收。'
     }
   }
-  return inspectAt(result.filePaths[0])
+  return inspectSharePackageAt(result.filePaths[0])
 }
 
-export const installSharePackage = async (filePath: string): Promise<SharePackageInstallResult> => {
-  const inspection = await inspectAt(filePath)
+type ShareInstallHooks = { afterMigration?: (installedRoot: string) => Promise<void> }
+
+export const installSharePackageAt = async (filePath: string, hooks: ShareInstallHooks = {}): Promise<SharePackageInstallResult> => {
+  const inspection = await inspectSharePackageAt(filePath)
   if (!inspection.valid || !inspection.canInstall) return { ok: false, message: '共享包尚不满足安装条件。', output: inspection.findings.filter((finding) => finding.severity === 'blocker').map((finding) => `${finding.title}：${finding.detail}`).join('\n'), installedRoot: null }
   const envelope = await loadEnvelope(filePath)
   if (envelope.manifest.packageId !== inspection.packageId || envelope.integrity.digest !== inspection.digest) {
@@ -272,7 +318,8 @@ export const installSharePackage = async (filePath: string): Promise<SharePackag
   }
   await writeReceipt('PendingVerification')
   await writeInstallStatus('Quarantined')
-  const postInspection = await inspectAt(filePath)
+  await hooks.afterMigration?.(installedRoot)
+  const postInspection = await inspectSharePackageAt(filePath)
   const postBlockers = postInspection.findings.filter((finding) => finding.severity === 'blocker')
   if (postBlockers.length) {
     await writeReceipt('Quarantined', postBlockers)
@@ -300,3 +347,5 @@ export const installSharePackage = async (filePath: string): Promise<SharePackag
     installedRoot
   }
 }
+
+export const installSharePackage = async (filePath: string): Promise<SharePackageInstallResult> => installSharePackageAt(filePath)

@@ -44,6 +44,9 @@ const main = async (): Promise<void> => {
     DisplayName: 'Round 2 fixture base',
     Created: new Date().toISOString(),
     StorageMode: 'FullCopy',
+    ShareInstallStatus: 'Verified',
+    SharePackageID: '00000000-0000-4000-8000-000000000099',
+    SharePackageDigest: 'A'.repeat(64),
     LaunchArguments: ['-nosteam', '-cachedir=E:\\obsolete-cache']
   }
   await write(path.join(baseRoot, 'metadata', 'freeze.json'), JSON.stringify(baseConfig, null, 2))
@@ -64,6 +67,9 @@ const main = async (): Promise<void> => {
   assert(duplicatePreview.warnings.some((warning) => warning.includes('已经存在')))
   const fullSnapshot = await getSnapshot()
   assert.equal(fullSnapshot.config?.StorageMode, 'FullCopy')
+  assert.equal(fullSnapshot.config?.ShareInstallStatus, undefined)
+  assert.equal(fullSnapshot.config?.SharePackageID, undefined)
+  assert.equal(fullSnapshot.config?.SharePackageDigest, undefined)
   assert(!fullSnapshot.config?.LaunchArguments?.some((argument) => argument.toLowerCase() === '-nosteam'))
   assert(fullSnapshot.config?.LaunchArguments?.some((argument) => argument === `-cachedir=${fullSnapshot.config?.CachePath}`))
   await fs.writeFile(path.join(fullSnapshot.config!.CachePath, 'options.ini'), 'fullscreen=false', 'utf8')

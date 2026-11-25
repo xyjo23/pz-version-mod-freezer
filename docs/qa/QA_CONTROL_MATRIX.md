@@ -19,7 +19,7 @@ Status meanings:
 | Analysis selector | native integrity/compatibility workspace switching; preview responsibility popover and result replacement | PASS | packaged-build regression |
 | Integrity report | clean, missing, changed, added and empty-baseline oracle states | PASS | locked/unreadable file fault injection |
 | Compatibility report | real Steam data plus dependency, cycle, order, tiledef and semantic-translation oracle rules | PASS | Lua/runtime and crash-log correlation |
-| Share package | create, inspect, unsigned notice, install result | PASS-MOCK | actual `.pzshare` filesystem round trip |
+| Share package | real create/transfer/inspect/install; reference-only boundary; digest tamper, missing MOD, drift and weak identity blockers; verified receipt, quarantine and repeated-install guard | PASS | signed producer identity and receiver-side loadout application are later format/workflow work |
 | Help center | native cards, open, next, close and v0.8 label; preview previous and topic scroll reset | PASS | packaged keyboard and small-window pass |
 | Settings | native page rendering; preview switches, terminal enable/disable and radar persistence | PASS | restart persistence in packaged build |
 | Terminal | floating entry, open state, disable removes drawer | PASS | real running/error output and pin behavior |
