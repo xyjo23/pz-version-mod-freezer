@@ -367,6 +367,98 @@ export type CompatibilityModRecord = {
   active: boolean
 }
 
+export type ModCatalogFileKind = 'lua' | 'pz-script' | 'java-archive' | 'jvm-bytecode' | 'native-binary' | 'xml' | 'json' | 'translation' | 'map' | 'asset' | 'media' | 'metadata' | 'other'
+
+export type ModCatalogFile = {
+  relativePath: string
+  sourcePath: string
+  layerPath: string
+  bytes: number
+  modifiedAt: string
+  sha256: string
+  kind: ModCatalogFileKind
+}
+
+export type ModCatalogEntry = {
+  catalogId: string
+  key: string
+  name: string
+  modId: string | null
+  workshopId: string | null
+  source: 'Workshop' | 'Local'
+  rootPath: string
+  active: boolean
+  version: {
+    target: string
+    selected: string | null
+    variants: string[]
+    layers: string[]
+    minimum: string | null
+    maximum: string | null
+    resolutionIssue: string | null
+  }
+  dependencies: {
+    require: string[]
+    incompatible: string[]
+    loadAfter: string[]
+    loadBefore: string[]
+  }
+  metadata: {
+    path: string | null
+    sha256: string | null
+    readError: string | null
+  }
+  content: {
+    files: ModCatalogFile[]
+    totalFiles: number
+    totalBytes: number
+    contentDigest: string
+    layerOverrides: Array<{ relativePath: string; replacedLayer: string; effectiveLayer: string }>
+    skippedLinks: string[]
+    unreadable: Array<{ path: string; error: string }>
+    jars: string[]
+    classes: string[]
+    nativeBinaries: string[]
+  }
+  evidence: string[]
+}
+
+export type ModCatalog = {
+  schemaVersion: 1
+  generatedAt: string
+  source: 'Steam' | 'Frozen'
+  sourceLabel: string
+  catalogPath: string
+  game: GameIdentity
+  digestAlgorithm: 'SHA-256'
+  catalogDigest: string
+  completeness: 'complete' | 'partial'
+  summary: {
+    discoveredMods: number
+    resolvedMods: number
+    unresolvedMods: number
+    activeMods: number
+    uniqueModIds: number
+    workshopProjects: number
+    duplicateModIds: number
+    files: number
+    bytes: number
+    jars: number
+    classes: number
+    nativeBinaries: number
+    unreadable: number
+    skippedLinks: number
+  }
+  indexes: {
+    byModId: Record<string, string[]>
+    byWorkshopId: Record<string, string[]>
+    requiredBy: Record<string, string[]>
+  }
+  methodology: string[]
+  limitations: string[]
+  mods: ModCatalogEntry[]
+}
+
 export type CompatibilityContext = {
   kind: 'save' | 'server'
   name: string
@@ -398,6 +490,15 @@ export type CompatibilityReport = {
   scopeLabel: string
   plainSummary: string
   reportPath: string | null
+  modCatalog: {
+    path: string
+    digest: string
+    completeness: ModCatalog['completeness']
+    files: number
+    jars: number
+    classes: number
+    nativeBinaries: number
+  }
   identity: GameIdentity
   verdict: CompatibilitySeverity
   methodology: string[]

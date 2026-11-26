@@ -358,6 +358,9 @@ const CompatibilityResults = ({ report }: { report: CompatibilityReport }): Reac
     <div className="identity-evidence">
       <ShieldCheck /><div><b>{report.identity.version} · Build {report.identity.buildId}</b><span>revision {report.identity.revision ?? '未知'} · {report.identity.status === 'stale-cache' ? '运行缓存已过期，以二进制为准' : '二进制身份已解析'}</span></div>
     </div>
+    <div className={`identity-evidence catalog-evidence ${report.modCatalog.completeness}`}>
+      <Database /><div><b>统一 MOD 数据库 · {report.modCatalog.completeness === 'complete' ? '证据完整' : '证据不完整'}</b><span>{report.modCatalog.files} 个有效文件 · JAR {report.modCatalog.jars} · Class {report.modCatalog.classes} · 本地二进制 {report.modCatalog.nativeBinaries}</span><code>{report.modCatalog.digest}</code><small>{report.modCatalog.path}</small></div>
+    </div>
     <div className="compatibility-columns">
       <div className="compatibility-issues">
         <div className="report-section-title"><h3>规则结果</h3><span>{report.issues.filter((entry) => entry.appliesToScope).length} 项影响当前范围 · {report.issues.length} 项已列出</span></div>

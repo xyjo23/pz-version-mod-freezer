@@ -208,6 +208,11 @@ const main = async (): Promise<void> => {
   assert.equal(compatibility.verdict, 'blocker')
   assert(compatibility.summary.identicalOverlapPaths >= 1)
   assert(compatibility.summary.baseGameOverrides >= 1)
+  assert(existsSync(compatibility.modCatalog.path), 'Compatibility analysis must persist the unified MOD catalog.')
+  const catalog = JSON.parse(await fs.readFile(compatibility.modCatalog.path, 'utf8')) as { catalogDigest: string; summary: { discoveredMods: number; files: number } }
+  assert.equal(catalog.catalogDigest, compatibility.modCatalog.digest)
+  assert.equal(catalog.summary.discoveredMods, compatibility.summary.installedMods)
+  assert(catalog.summary.files > 0)
 
   console.log(`ANALYSIS_FIXTURE_E2E=${JSON.stringify({
     root: testRoot,
@@ -225,6 +230,8 @@ const main = async (): Promise<void> => {
     unknowns: compatibility.summary.unknowns,
     overlapPaths: compatibility.summary.overlapPaths,
     identicalOverlapPaths: compatibility.summary.identicalOverlapPaths,
+    modCatalogDigest: compatibility.modCatalog.digest,
+    modCatalogFiles: compatibility.modCatalog.files,
     checkedRules: ['MOD-ID-UNIQUE', 'MOD-DEPENDENCY-ACYCLIC', 'MOD-REQUIRE-SATISFIED', 'MOD-INCOMPATIBLE', 'MOD-LOAD-AFTER', 'MOD-LOAD-BEFORE', 'MOD-VERSION-RANGE', 'TILEDEF-NUMBER-UNIQUE', 'FILE-OVERLAP-LUA', 'FILE-OVERLAP-SCRIPTS', 'FILE-OVERLAP-TRANSLATION', 'FILE-OVERLAP-HASH-EQUALITY', 'FILE-TRANSLATION-KEYS-DISJOINT', 'BASE-PATH-OVERRIDE', 'B42-COMPATIBLE-LAYER']
   })}`)
 }

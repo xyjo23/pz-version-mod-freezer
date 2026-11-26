@@ -16,6 +16,7 @@ import type {
   GameIdentity
 } from '../shared/types'
 import { readGameIdentity } from './game-identity'
+import { buildModCatalog, persistModCatalog } from './mod-catalog'
 import { atomicWriteJsonIfChanged } from './safe-write'
 import { detectSteamInstallation } from './steam-service'
 import { collectLayerFiles, discoverLocalMods, discoverWorkshopMods, gameVersionKey, normalizeModId, type ResolvedMod } from './mod-resolver'
@@ -343,6 +344,21 @@ export const analyzeCompatibility = async (): Promise<CompatibilityReport> => {
   const activeOrder = unique(selectedContext?.modIds ?? [])
   const activeSet = new Set(activeOrder)
   for (const mod of mods) mod.record.active = Boolean(mod.record.modId && activeSet.has(mod.record.modId))
+  const catalogBase = source.source === 'Steam' ? path.dirname(source.outputRoot) : source.outputRoot
+  const catalogPath = path.join(catalogBase, 'mod-catalog', `latest-${source.source.toLowerCase()}.json`)
+  const modCatalog = await persistModCatalog(await buildModCatalog({
+    source: source.source,
+    sourceLabel: source.label,
+    catalogPath,
+    game: source.identity,
+    mods
+  }))
+
+  if (modCatalog.completeness === 'partial') {
+    issues.push(issue('mod-catalog-partial', 'unknown', 'files', 'MOD 数据库证据不完整', `有 ${modCatalog.summary.unreadable} 项无法读取，另有 ${modCatalog.summary.skippedLinks} 个目录联接或符号链接被安全跳过。`, [modCatalog.catalogPath, ...modCatalog.mods.flatMap((mod) => mod.content.unreadable.slice(0, 3).map((entry) => `${entry.path}：${entry.error}`))], [], { confidence: 'unverified', impact: '缺少的文件不参与依赖类型和内容指纹统计，不能把数据库解释为完整覆盖。', action: '关闭正在更新这些 MOD 的程序、修复读取权限，并重新运行兼容性分析。', rule: 'MOD-CATALOG-COMPLETE' }))
+  } else {
+    issues.push(issue('mod-catalog-complete', 'pass', 'files', 'MOD 数据库已完整重建', `${modCatalog.summary.discoveredMods} 个 MOD、${modCatalog.summary.files} 个有效文件均已建立 SHA-256 证据。`, [modCatalog.catalogPath, `数据库摘要：${modCatalog.catalogDigest}`], [], { rule: 'MOD-CATALOG-COMPLETE' }))
+  }
 
   if (!selectedContext) {
     issues.push(issue('context-missing', 'unknown', 'save', '没有唯一的启用模组上下文', contexts.servers.length > 1 ? `发现 ${contexts.servers.length} 个服务器配置，但当前页面没有指定要分析哪一个；本次只分析已安装内容清单。` : '未找到存档 mods.txt 或唯一服务器配置；本次只分析已安装内容清单。', [source.cachePath, ...contexts.servers.map((server) => server.path)], [], { confidence: 'unverified', impact: '无法准确判断哪些 MOD 会同时加载，因此依赖、顺序和文件覆盖结论不代表某个实际存档或服务器。', action: '后续请选择具体存档或服务器配置后重新分析。', rule: 'CONTEXT-EXPLICIT' }))
@@ -504,11 +520,21 @@ export const analyzeCompatibility = async (): Promise<CompatibilityReport> => {
     scopeLabel,
     plainSummary,
     reportPath,
+    modCatalog: {
+      path: modCatalog.catalogPath,
+      digest: modCatalog.catalogDigest,
+      completeness: modCatalog.completeness,
+      files: modCatalog.summary.files,
+      jars: modCatalog.summary.jars,
+      classes: modCatalog.summary.classes,
+      nativeBinaries: modCatalog.summary.nativeBinaries
+    },
     identity: source.identity,
     verdict,
     methodology: [
       '从游戏二进制读取实际版本身份，并按 major.minor 选择 B42 MOD 版本目录。',
       '解析 mod.info 的 Mod ID、版本范围、require、incompatible、loadAfter 和 loadBefore。',
+      '重建统一 MOD 数据库，对所有实际生效普通文件计算 SHA-256，并单独登记 JAR、Class 与本地二进制。',
       '只对当前分析范围内的 MOD 建立依赖图和加载顺序。',
       '对同路径文件计算 SHA-256；内容完全相同的重叠不会作为风险报告。'
     ],

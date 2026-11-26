@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added a rebuildable MOD catalog containing Workshop/Mod IDs, B42 effective layers, dependency indexes, per-file SHA-256 evidence and explicit JAR/Class/native-binary inventories.
+- Added catalog completeness boundaries for unresolved variants, missing Mod IDs, unreadable or changing files, and safely skipped directory links.
+- Connected the catalog digest, coverage and binary counts to compatibility reports and the maintenance UI.
+- Added deterministic catalog tests, including same-size/same-mtime content replacement and directory-link escape protection, plus a real-directory read-only scanner.
 - Prevented version activation from rewriting another manager library when multiple libraries are registered.
 - Made external imported versions read-only during activation and confined their runtime reports, backups and manifests to the imported version directory.
 - Added a shared atomic JSON writer with unchanged-content detection, serialized concurrent writes, rollback recovery and legacy-pointer backups.

@@ -288,6 +288,12 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .identity-evidence > div { display: flex; flex-direction: column; gap: 3px; }
 .identity-evidence b { font-size: 13px; }
 .identity-evidence span { color: #9eaba4; font-size: 11px; }
+.catalog-evidence { align-items: flex-start; border-color: rgba(92,187,255,.16); background: rgba(92,187,255,.035); }
+.catalog-evidence > svg { color: #73c6ff; margin-top: 2px; }
+.catalog-evidence > div { min-width: 0; width: 100%; }
+.catalog-evidence code, .catalog-evidence small { color: #74827b; font-size: 10px; overflow-wrap: anywhere; }
+.catalog-evidence.partial { border-color: rgba(255,190,92,.22); background: rgba(255,190,92,.04); }
+.catalog-evidence.partial > svg { color: #ffbd59; }
 .compatibility-columns { display: grid; grid-template-columns: minmax(0,1.08fr) minmax(0,.92fr); gap: 11px; margin-top: 17px; }
 .compatibility-issues, .overlap-evidence { min-width: 0; }
 .report-section-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
