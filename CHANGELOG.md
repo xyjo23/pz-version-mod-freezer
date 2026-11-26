@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Prevented version activation from rewriting another manager library when multiple libraries are registered.
+- Made external imported versions read-only during activation and confined their runtime reports, backups and manifests to the imported version directory.
+- Added a shared atomic JSON writer with unchanged-content detection, serialized concurrent writes, rollback recovery and legacy-pointer backups.
+- Enforced lexical and real-path ownership checks so directory links cannot redirect managed writes outside the selected library.
+- Revalidated the manager root immediately before migration and activated committed versions by absolute path to avoid cross-library name collisions.
+- Routed shared-package status updates through the same managed-version ownership checks.
+- Added safety, multi-library activation and external-import regression coverage plus a documented write-safety matrix.
+
 ## 0.8.0-preview - 2026-11-24
 
 - Added the `.pzshare` v1 workflow for creating, inspecting and installing auditable shared version manifests without embedding game, MOD, save or account data.

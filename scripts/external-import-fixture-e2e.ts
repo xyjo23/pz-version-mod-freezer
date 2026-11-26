@@ -60,14 +60,23 @@ const main = async (): Promise<void> => {
   const repeated = await importVersionPaths([externalRoot])
   assert.equal(repeated.imported, 0)
   assert.equal(repeated.skipped, 1)
+  const externalMetadataPath = path.join(externalRoot, 'metadata', 'freeze.json')
+  const externalMetadataBefore = await fs.readFile(externalMetadataPath, 'utf8')
+  const externalMetadataTime = (await fs.stat(externalMetadataPath)).mtimeMs
   const activated = await activateVersion(imported.id)
   assert.equal(activated.activeSource, 'Frozen')
   assert.equal(path.resolve(activated.config!.FreezeRoot), path.resolve(externalRoot))
   assert.equal(path.resolve(activated.config!.GamePath), path.resolve(gamePath))
   assert.equal(path.resolve(activated.config!.CachePath), path.resolve(cachePath))
+  assert.equal(path.resolve(activated.config!.ReportPath), path.resolve(path.join(externalRoot, 'reports')))
+  assert.equal(path.resolve(activated.config!.BackupPath), path.resolve(path.join(externalRoot, 'backups')))
+  assert.equal(path.resolve(activated.config!.ManifestPath!), path.resolve(path.join(externalRoot, 'manifests')))
   assert.equal(path.resolve(activated.config!.ManagerRoot), path.resolve(externalRoot))
+  assert.equal(activated.enginePath, null)
   assert(activated.config!.LaunchArguments?.includes(`-cachedir=${cachePath}`))
   assert(!activated.config!.LaunchArguments?.includes('-cachedir=E:\\stale-cache'))
+  assert.equal(await fs.readFile(externalMetadataPath, 'utf8'), externalMetadataBefore)
+  assert.equal((await fs.stat(externalMetadataPath)).mtimeMs, externalMetadataTime)
   const persisted = await getSnapshot()
   assert.equal(persisted.isHealthy, true)
   assert.equal(path.resolve(persisted.config!.FreezeRoot), path.resolve(externalRoot))
@@ -81,7 +90,8 @@ const main = async (): Promise<void> => {
     origin: imported.origin,
     activated: persisted.activeSource,
     normalizedGamePath: persisted.config?.GamePath,
-    normalizedCachePath: persisted.config?.CachePath
+    normalizedCachePath: persisted.config?.CachePath,
+    externalMetadataPreserved: true
   })}`)
 }
 

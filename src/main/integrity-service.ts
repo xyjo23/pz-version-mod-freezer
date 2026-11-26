@@ -6,6 +6,7 @@ import { app } from 'electron'
 
 import type { AnalysisConfidence, CompatibilitySeverity, FreezeConfig, IntegrityFinding, IntegrityReport, ReferencedModRoot } from '../shared/types'
 import { readGameIdentity } from './game-identity'
+import { atomicWriteJsonIfChanged } from './safe-write'
 import { detectSteamInstallation, validateSteamGame } from './steam-service'
 import { getSnapshot } from './vault-service'
 
@@ -151,7 +152,7 @@ const persist = async (report: IntegrityReport, outputRoot: string): Promise<Int
   await fs.mkdir(outputRoot, { recursive: true })
   const reportPath = path.join(outputRoot, `latest-${report.source.toLowerCase()}.json`)
   const saved = { ...report, reportPath }
-  await fs.writeFile(reportPath, JSON.stringify(saved, null, 2), 'utf8')
+  await atomicWriteJsonIfChanged(reportPath, saved)
   return saved
 }
 

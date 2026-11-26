@@ -8,6 +8,7 @@ import type { ActionResult, FreezeConfig, LauncherAction, MigrationPreview, Migr
 import { readGameIdentity } from './game-identity'
 import { analyzeQuickMigration, materializeQuickMigration } from './quick-migration-service'
 import { frozenLaunchArguments } from './launch-arguments'
+import { assertPathWithin, atomicWriteFileIfChanged, atomicWriteJsonIfChanged, isPathWithin } from './safe-write'
 import { detectSteamInstallation } from './steam-service'
 import { activateVersion, getSnapshot, listVersions } from './vault-service'
 
@@ -264,13 +265,13 @@ const backupMutableData = async (managerRoot: string, sourceCache: string, sourc
     if (!entry.isFile() || !PROTECTED_ROOT_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) continue
     await fs.copyFile(path.join(sourceCache, entry.name), path.join(backupRoot, entry.name))
   }
-  await fs.writeFile(path.join(backupRoot, 'backup.json'), JSON.stringify({
+  await atomicWriteJsonIfChanged(path.join(backupRoot, 'backup.json'), {
     schemaVersion: 1,
     createdAt: new Date().toISOString(),
     sourceCache,
     sourceLabel,
     policy: 'Saves plus root configuration and database files; no automatic deletion'
-  }, null, 2), 'utf8')
+  })
   return backupRoot
 }
 
@@ -300,7 +301,7 @@ const hashFile = (filePath: string): Promise<string> => new Promise((resolve, re
 const writeHashManifest = async (root: string, destination: string): Promise<number> => {
   if (!existsSync(root)) {
     await fs.mkdir(path.dirname(destination), { recursive: true })
-    await fs.writeFile(destination, '\uFEFF"RelativePath","Length","SHA256"\r\n', 'utf8')
+    await atomicWriteFileIfChanged(destination, '\uFEFF"RelativePath","Length","SHA256"\r\n')
     return 0
   }
   const files = await collectFiles(root)
@@ -314,7 +315,7 @@ const writeHashManifest = async (root: string, destination: string): Promise<num
     rows.push(...batch)
   }
   await fs.mkdir(path.dirname(destination), { recursive: true })
-  await fs.writeFile(destination, `\uFEFF${rows.join('\r\n')}\r\n`, 'utf8')
+  await atomicWriteFileIfChanged(destination, `\uFEFF${rows.join('\r\n')}\r\n`)
   return files.length
 }
 
@@ -350,14 +351,13 @@ const writeRegisteredConfig = async (
   await fs.mkdir(path.join(workingRoot, 'metadata'), { recursive: true })
   await fs.mkdir(path.join(workingRoot, 'reports'), { recursive: true })
   await fs.mkdir(path.join(workingRoot, 'backups'), { recursive: true })
-  await fs.writeFile(path.join(workingRoot, 'metadata', 'freeze.json'), JSON.stringify(config, null, 2), 'utf8')
+  await atomicWriteJsonIfChanged(path.join(workingRoot, 'metadata', 'freeze.json'), config)
   return config
 }
 
-const migrateFromFrozen = async (request: MigrationRequest, workingRoot: string, targetRoot: string): Promise<string> => {
+const migrateFromFrozen = async (request: MigrationRequest, workingRoot: string, targetRoot: string, managerRoot: string): Promise<string> => {
   const source = await resolveFrozenSource(request.sourceId)
   if (!source) throw new Error('所选冻结版本不存在。')
-  const managerRoot = (await getSnapshot()).managerRoot!
   const sourceCachePath = source.config.CachePath || path.join(source.root, 'cache')
   const saveBackup = request.protectSaves
     ? await backupMutableData(managerRoot, sourceCachePath, `frozen_${source.config.Version ?? request.sourceId ?? 'unknown'}`)
@@ -405,8 +405,8 @@ const migrateFromFrozen = async (request: MigrationRequest, workingRoot: string,
     WorkshopProjectCount: new Set(referencedMods.flatMap((mod) => mod.workshopId ? [mod.workshopId] : [])).size
   })
   const record = { schemaVersion: 2, createdAt: new Date().toISOString(), source: source.root, target: targetRoot, storageMode: config.StorageMode, analysis: plan.analysis, referencedMods }
-  await fs.writeFile(path.join(workingRoot, 'metadata', 'reuse-record.json'), JSON.stringify(record, null, 2), 'utf8')
-  await fs.writeFile(path.join(workingRoot, 'reports', 'quick-migration-analysis.json'), JSON.stringify(plan.analysis, null, 2), 'utf8')
+  await atomicWriteJsonIfChanged(path.join(workingRoot, 'metadata', 'reuse-record.json'), record)
+  await atomicWriteJsonIfChanged(path.join(workingRoot, 'reports', 'quick-migration-analysis.json'), plan.analysis)
   return `快速薄版本创建完成：游戏核心引用 ${plan.analysis.sourceGameFiles} 个文件；可用 MOD ${referencedMods.length} 个根目录，硬链接 ${hardLinkedModFiles} 个文件、回退复制 ${copiedModFiles} 个；独立数据 ${plan.analysis.copiedMutableFiles} 个文件。${plan.analysis.missingModIds.length ? ` 启用上下文仍有 ${plan.analysis.missingModIds.length} 个 Mod ID 在来源中缺失，证据已写入分析报告。` : ''}基础冻结版不可移动或删除。${saveBackup ? `\n迁移前存档快照：${saveBackup}` : ''}`
 }
 
@@ -450,7 +450,7 @@ const migrateFromSteam = async (request: MigrationRequest, steam: SteamInstallat
   if (frozenIdentity.version !== steam.version || frozenIdentity.revision !== steam.revision || frozenIdentity.jarSha256 !== steam.gameJarSha256) {
     throw new Error(`冻结后身份复核失败：来源 ${steam.version}/${steam.revision ?? 'unknown'}，目标 ${frozenIdentity.version}/${frozenIdentity.revision ?? 'unknown'}`)
   }
-  await fs.writeFile(path.join(metadataWorking, 'game-identity.json'), JSON.stringify(frozenIdentity, null, 2), 'utf8')
+  await atomicWriteJsonIfChanged(path.join(metadataWorking, 'game-identity.json'), frozenIdentity)
   const gameFiles = await writeHashManifest(gameWorking, path.join(manifestsWorking, 'game.sha256.csv'))
   const modFiles = await writeHashManifest(path.join(cacheWorking, 'mods'), path.join(manifestsWorking, 'mods.sha256.csv'))
   const config: FreezeConfig & Record<string, unknown> = {
@@ -478,7 +478,7 @@ const migrateFromSteam = async (request: MigrationRequest, steam: SteamInstallat
   }
   await writeRegisteredConfig(managerRoot, workingRoot, targetRoot, config, request.mode, request.label!)
   const report = { schemaVersion: 1, createdAt: new Date().toISOString(), source: 'Steam', gameFiles, modFiles, localizedMods, saveProtection: request.protectSaves }
-  await fs.writeFile(path.join(workingRoot, 'reports', 'creation-summary.json'), JSON.stringify(report, null, 2), 'utf8')
+  await atomicWriteJsonIfChanged(path.join(workingRoot, 'reports', 'creation-summary.json'), report)
   return `Steam 原版安全复制完成。游戏文件 ${gameFiles} 个，MOD 文件 ${modFiles} 个，本地化 MOD 根目录 ${localizedMods} 个。\n新版本目录：${targetRoot}${saveBackup ? `\n迁移前存档快照：${saveBackup}` : ''}`
 }
 
@@ -500,12 +500,12 @@ const archiveIncomplete = async (managerRoot: string, workingRoot: string): Prom
 
 const writeTransaction = async (workingRoot: string, targetRoot: string, phase: 'copying' | 'ready'): Promise<void> => {
   await fs.mkdir(workingRoot, { recursive: true })
-  await fs.writeFile(path.join(workingRoot, '.pzvault-migration.json'), JSON.stringify({
+  await atomicWriteJsonIfChanged(path.join(workingRoot, '.pzvault-migration.json'), {
     schemaVersion: 1,
     phase,
     targetRoot,
     updatedAt: new Date().toISOString()
-  }, null, 2), 'utf8')
+  })
 }
 
 const pauseBeforeAtomicCommitForTest = async (): Promise<void> => {
@@ -532,20 +532,23 @@ export const executeMigration = async (request: MigrationRequest): Promise<Actio
     const snapshot = await getSnapshot()
     if (!snapshot.managerRoot) throw new Error('请先选择版本管理目录。')
     managerRoot = snapshot.managerRoot
+    const frozenLibraryRoot = path.join(managerRoot, 'frozen')
+    if (!isPathWithin(frozenLibraryRoot, preview.targetPath)) throw new Error('版本管理目录在预览后发生变化，请重新预览迁移。')
+    await assertPathWithin(managerRoot, frozenLibraryRoot, '版本库真实路径归属异常，拒绝迁移')
     if (existsSync(preview.targetPath)) throw new Error(`目标目录已经存在：${preview.targetPath}`)
     workingRoot = stagingRootFor(managerRoot, preview.targetPath)
     const recovered = await archiveIncomplete(managerRoot, workingRoot)
     await writeTransaction(workingRoot, preview.targetPath, 'copying')
     const output = request.sourceType === 'Steam'
       ? await migrateFromSteam(request, await detectSteamInstallation(), workingRoot, preview.targetPath, managerRoot)
-      : await migrateFromFrozen(request, workingRoot, preview.targetPath)
+      : await migrateFromFrozen(request, workingRoot, preview.targetPath, managerRoot)
     await writeTransaction(workingRoot, preview.targetPath, 'ready')
     await pauseBeforeAtomicCommitForTest()
     await fs.rm(path.join(workingRoot, '.pzvault-migration.json'), { force: true })
     await fs.mkdir(path.dirname(preview.targetPath), { recursive: true })
     await fs.rename(workingRoot, preview.targetPath)
     committed = true
-    await activateVersion(path.basename(preview.targetPath))
+    await activateVersion(preview.targetPath)
     return {
       ok: true,
       action,

@@ -16,6 +16,7 @@ import type {
   GameIdentity
 } from '../shared/types'
 import { readGameIdentity } from './game-identity'
+import { atomicWriteJsonIfChanged } from './safe-write'
 import { detectSteamInstallation } from './steam-service'
 import { collectLayerFiles, discoverLocalMods, discoverWorkshopMods, gameVersionKey, normalizeModId, type ResolvedMod } from './mod-resolver'
 import { analyzeTranslationSemantics } from './translation-analysis'
@@ -536,6 +537,6 @@ export const analyzeCompatibility = async (): Promise<CompatibilityReport> => {
     overlaps: files.overlaps,
     mods: mods.map((mod) => mod.record).sort((left, right) => Number(right.active) - Number(left.active) || left.name.localeCompare(right.name, 'zh-CN'))
   }
-  await fs.writeFile(reportPath, JSON.stringify(report, null, 2), 'utf8')
+  await atomicWriteJsonIfChanged(reportPath, report)
   return report
 }

@@ -3,6 +3,8 @@ import { existsSync, promises as fs } from 'node:fs'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
+import { atomicWriteFileIfChanged } from './safe-write'
+
 export type ConsoleSnapshot = {
   path: string
   size: number
@@ -126,8 +128,8 @@ const persistReceipt = async (options: LaunchMonitorOptions, result: Omit<Launch
   const fileName = `${startedAt.replace(/[-:TZ.]/g, '')}-${options.source.toLowerCase()}.json`
   const receiptPath = path.join(options.reportRoot, fileName)
   const contents = JSON.stringify(receipt, null, 2)
-  await fs.writeFile(receiptPath, contents, 'utf8')
-  await fs.writeFile(path.join(options.reportRoot, 'latest.json'), contents, 'utf8')
+  await atomicWriteFileIfChanged(receiptPath, contents)
+  await atomicWriteFileIfChanged(path.join(options.reportRoot, 'latest.json'), contents)
   const evidenceText = consoleResult.evidence.length
     ? `本次新增的高严重度日志证据：\n${consoleResult.evidence.join('\n')}`
     : '本次启动观察窗口内没有捕获到新的高严重度 console.txt 行。'

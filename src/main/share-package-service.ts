@@ -17,10 +17,11 @@ import type {
 import { analyzeCompatibility } from './compatibility-service'
 import { analyzeIntegrity } from './integrity-service'
 import { executeMigration } from './migration-service'
+import { atomicWriteFileIfChanged, atomicWriteJsonIfChanged } from './safe-write'
 import { fingerprintDirectory, type DirectoryFingerprint } from './share-package-fingerprint'
 import { createShareEnvelope, parseSharePackage, serializeSharePackage, SHARE_PACKAGE_MAX_BYTES } from './share-package-format'
 import { evaluateReconstruction, isTrustedShareIdentity, type LocalShareModEvidence } from './share-package-match'
-import { activateSteam, activateVersion, getSnapshot, listVersions } from './vault-service'
+import { activateSteam, activateVersion, getSnapshot, listVersions, updateActiveManagedVersionConfig } from './vault-service'
 
 const safeFileName = (value: string): string => (
   value.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/g, '').trim().slice(0, 80) || 'PZ-共享清单'
@@ -149,7 +150,7 @@ const buildSharePackage = async (): Promise<{ envelope: SharePackageEnvelopeV1; 
 export const createSharePackageAt = async (filePath: string): Promise<SharePackageCreateResult> => {
   const { envelope, modCount } = await buildSharePackage()
   await fs.mkdir(path.dirname(filePath), { recursive: true })
-  await fs.writeFile(filePath, serializeSharePackage(envelope), 'utf8')
+  await atomicWriteFileIfChanged(filePath, serializeSharePackage(envelope))
   return {
     canceled: false,
     ok: true,
@@ -169,7 +170,7 @@ export const createSharePackage = async (): Promise<SharePackageCreateResult> =>
     filters: [{ name: 'PZ Vault 共享清单', extensions: ['pzshare'] }]
   })
   if (result.canceled || !result.filePath) return { canceled: true, ok: false, filePath: null, packageId: null, digest: null, message: '已取消制作共享包。' }
-  await fs.writeFile(result.filePath, serializeSharePackage(envelope), 'utf8')
+  await atomicWriteFileIfChanged(result.filePath, serializeSharePackage(envelope))
   return {
     canceled: false,
     ok: true,
@@ -301,20 +302,19 @@ export const installSharePackageAt = async (filePath: string, hooks: ShareInstal
   const installedRoot = installed.config?.FreezeRoot ?? null
   if (!installedRoot) return { ok: false, message: '版本复制完成，但无法确认新版本目录。', output: migration.output, installedRoot: null }
   await fs.mkdir(path.join(installedRoot, 'metadata'), { recursive: true })
-  await fs.writeFile(path.join(installedRoot, 'metadata', 'share-package.json'), `${JSON.stringify(envelope, null, 2)}\n`, 'utf8')
-  await fs.writeFile(path.join(installedRoot, 'metadata', 'shared-loadout.json'), `${JSON.stringify(envelope.manifest.loadout, null, 2)}\n`, 'utf8')
+  await atomicWriteJsonIfChanged(path.join(installedRoot, 'metadata', 'share-package.json'), envelope, { trailingNewline: true })
+  await atomicWriteJsonIfChanged(path.join(installedRoot, 'metadata', 'shared-loadout.json'), envelope.manifest.loadout, { trailingNewline: true })
   const receiptPath = path.join(installedRoot, 'metadata', 'share-install.json')
   const writeReceipt = async (status: 'PendingVerification' | 'Verified' | 'Quarantined', blockers: SharePackageFinding[] = []): Promise<void> => {
-    await fs.writeFile(receiptPath, `${JSON.stringify({ schemaVersion: 1, packageId: envelope.manifest.packageId, packageDigest: envelope.integrity.digest, status, checkedAt: new Date().toISOString(), blockers }, null, 2)}\n`, 'utf8')
+    await atomicWriteJsonIfChanged(receiptPath, { schemaVersion: 1, packageId: envelope.manifest.packageId, packageDigest: envelope.integrity.digest, status, checkedAt: new Date().toISOString(), blockers }, { trailingNewline: true })
   }
   const writeInstallStatus = async (status: 'Verified' | 'Quarantined'): Promise<void> => {
-    const current = await getSnapshot()
-    if (!current.config || path.resolve(current.config.FreezeRoot).toLowerCase() !== path.resolve(installedRoot).toLowerCase()) {
-      throw new Error('无法确认共享版本仍是当前版本，拒绝写入安装状态。')
-    }
-    const next = { ...current.config, ShareInstallStatus: status, SharePackageID: envelope.manifest.packageId, SharePackageDigest: envelope.integrity.digest }
-    await fs.writeFile(path.join(installedRoot, 'metadata', 'freeze.json'), `${JSON.stringify(next, null, 2)}\n`, 'utf8')
-    if (current.managerRoot) await fs.writeFile(path.join(current.managerRoot, 'current-freeze.json'), `${JSON.stringify(next, null, 2)}\n`, 'utf8')
+    await updateActiveManagedVersionConfig(installedRoot, (current) => ({
+      ...current,
+      ShareInstallStatus: status,
+      SharePackageID: envelope.manifest.packageId,
+      SharePackageDigest: envelope.integrity.digest
+    }))
   }
   await writeReceipt('PendingVerification')
   await writeInstallStatus('Quarantined')
