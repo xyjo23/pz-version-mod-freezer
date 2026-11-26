@@ -6,6 +6,7 @@ import type { LauncherAction } from '../shared/types'
 import { analyzeCompatibility } from './compatibility-service'
 import { analyzeIntegrity } from './integrity-service'
 import { executeMigration, previewMigration } from './migration-service'
+import { applyModProfile, compareModProfile, createModProfile, exportModProfile, importModProfile, listModProfiles, undoModProfile } from './mod-profile-service'
 import { createSharePackage, inspectSharePackage, installSharePackage } from './share-package-service'
 import { detectSteamInstallation, launchSteamGame, validateSteamGame } from './steam-service'
 import { activateSteam, activateVersion, chooseManagerRoot, getSnapshot, importVersion, listCurrentMods, listVersions, openLogs, runAction } from './vault-service'
@@ -63,6 +64,13 @@ app.whenReady().then(() => {
   ipcMain.handle('vault:list-current-mods', listCurrentMods)
   ipcMain.handle('vault:analyze-integrity', () => analyzeIntegrity())
   ipcMain.handle('vault:analyze-compatibility', analyzeCompatibility)
+  ipcMain.handle('vault:list-mod-profiles', listModProfiles)
+  ipcMain.handle('vault:create-mod-profile', (_event, name: string, contextPath?: string) => createModProfile(name, contextPath))
+  ipcMain.handle('vault:compare-mod-profile', (_event, profileId: string, contextPath?: string) => compareModProfile(profileId, contextPath))
+  ipcMain.handle('vault:apply-mod-profile', (_event, profileId: string, previewToken: string, contextPath?: string) => applyModProfile(profileId, previewToken, contextPath))
+  ipcMain.handle('vault:undo-mod-profile', undoModProfile)
+  ipcMain.handle('vault:export-mod-profile', (_event, profileId: string) => exportModProfile(profileId))
+  ipcMain.handle('vault:import-mod-profile', importModProfile)
   ipcMain.handle('vault:list-versions', listVersions)
   ipcMain.handle('vault:import-version', importVersion)
   ipcMain.handle('vault:create-share-package', createSharePackage)

@@ -36,7 +36,7 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import type { ActionResult, AnalysisConfidence, CompatibilityReport, CompatibilitySeverity, FileOverlapClassification, FreezeVersionSummary, IntegrityReport, LauncherAction, LauncherSnapshot, MigrationMode, MigrationPreview, MigrationSourceType, ModSummary, SharePackageInspection, SteamInstallation } from '../../shared/types'
+import type { ActionResult, AnalysisConfidence, CompatibilityContext, CompatibilityReport, CompatibilitySeverity, FileOverlapClassification, FreezeVersionSummary, IntegrityReport, LauncherAction, LauncherSnapshot, MigrationMode, MigrationPreview, MigrationSourceType, ModProfile, ModProfileComparison, ModProfileListResult, ModSummary, SharePackageInspection, SteamInstallation } from '../../shared/types'
 import { VaultMark } from './VaultMark'
 import { layoutRadarItems } from './radar-layout'
 
@@ -397,6 +397,113 @@ const IntegrityResults = ({ report }: { report: IntegrityReport }): React.JSX.El
     <ReportMethod methodology={report.methodology} limitations={report.limitations} />
   </section>
 )
+
+const ModProfilesWorkspace = ({ report, onContentChanged }: { report: CompatibilityReport; onContentChanged: () => Promise<void> }): React.JSX.Element => {
+  const contexts = useMemo(() => {
+    const candidates = [report.activeContext, ...report.serverContexts].filter((context): context is CompatibilityContext => context !== null)
+    const seen = new Set<string>()
+    return candidates.filter((context) => {
+      const key = context.path.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  }, [report.activeContext, report.serverContexts])
+  const [profiles, setProfiles] = useState<ModProfileListResult>({ profiles: [], invalid: [] })
+  const [selectedId, setSelectedId] = useState('')
+  const [contextPath, setContextPath] = useState(report.analysisContext?.path ?? contexts[0]?.path ?? '')
+  const [name, setName] = useState(`${report.analysisContext?.name ?? contexts[0]?.name ?? '当前组合'} MOD 配置`)
+  const [comparison, setComparison] = useState<ModProfileComparison | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [message, setMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null)
+
+  const reload = useCallback(async (): Promise<void> => {
+    const next = await window.vault.listModProfiles()
+    setProfiles(next)
+    setSelectedId((current) => next.profiles.some((profile) => profile.id === current) ? current : next.profiles[0]?.id ?? '')
+  }, [])
+
+  useEffect(() => { void reload().catch((error) => setMessage({ tone: 'error', text: error instanceof Error ? error.message : String(error) })) }, [reload, report.generatedAt])
+  useEffect(() => {
+    if (contexts.some((context) => context.path === contextPath)) return
+    setContextPath(report.analysisContext?.path ?? contexts[0]?.path ?? '')
+  }, [contexts, contextPath, report.analysisContext?.path])
+
+  const run = async (key: string, operation: () => Promise<void>): Promise<void> => {
+    setBusy(key)
+    setMessage(null)
+    try { await operation() } catch (error) { setMessage({ tone: 'error', text: error instanceof Error ? error.message : String(error) }) } finally { setBusy(null) }
+  }
+
+  const createProfile = (): void => { void run('create', async () => {
+    const created = await window.vault.createModProfile(name, contextPath || undefined)
+    await reload()
+    setSelectedId(created.id)
+    setComparison(null)
+    setMessage({ tone: 'success', text: `已捕获“${created.name}”：${created.loadout.modIds.length} 个 Mod ID。` })
+  }) }
+
+  const compare = (profileId = selectedId): void => { if (!profileId) return; void run('compare', async () => {
+    const next = await window.vault.compareModProfile(profileId, contextPath || undefined)
+    setSelectedId(profileId)
+    setComparison(next)
+    setMessage({ tone: next.status === 'blocked' ? 'error' : 'success', text: next.summary })
+  }) }
+
+  const apply = (): void => { if (!comparison?.previewToken || !comparison.canApply) return; void run('apply', async () => {
+    const result = await window.vault.applyModProfile(comparison.profileId, comparison.previewToken!, contextPath || undefined)
+    setMessage({ tone: result.ok ? 'success' : 'error', text: result.message })
+    setComparison(null)
+    if (result.ok && result.operationId) await onContentChanged()
+  }) }
+
+  const undo = (): void => { void run('undo', async () => {
+    const result = await window.vault.undoModProfile()
+    setMessage({ tone: result.ok ? 'success' : 'error', text: result.message })
+    setComparison(null)
+    if (result.ok) await onContentChanged()
+  }) }
+
+  const importProfile = (): void => { void run('import', async () => {
+    const result = await window.vault.importModProfile()
+    if (!result.canceled) {
+      await reload()
+      if (result.profile) setSelectedId(result.profile.id)
+      setMessage({ tone: result.ok ? 'success' : 'error', text: result.message })
+    }
+  }) }
+
+  const exportProfile = (profileId: string): void => { void run(`export:${profileId}`, async () => {
+    const result = await window.vault.exportModProfile(profileId)
+    if (!result.canceled) setMessage({ tone: result.ok ? 'success' : 'error', text: result.message })
+  }) }
+
+  return <section className="mod-profiles-workspace">
+    <div className="mod-profiles-heading"><div><span className="eyebrow">MOD PROFILES · SAFE APPLY</span><h2>MOD 配置档案</h2><p>把明确的游戏身份、存档或服务器上下文、Mod ID 顺序与 Workshop 项目保存为可比较档案。</p></div><div className="profile-toolbar"><button className="secondary-button" disabled={busy !== null} onClick={importProfile}><Archive />导入</button><button className="secondary-button" disabled={busy !== null} onClick={undo}><RefreshCw />撤销上次应用</button></div></div>
+    <div className="profile-capture-grid">
+      <label><span>目标上下文</span><select value={contextPath} onChange={(event) => { setContextPath(event.target.value); setComparison(null) }} disabled={!contexts.length || busy !== null}>{contexts.length ? contexts.map((context) => <option value={context.path} key={context.path}>{context.kind === 'save' ? '存档' : '服务器'} · {context.name} · {context.modIds.length} MOD</option>) : <option value="">没有明确上下文</option>}</select></label>
+      <label><span>新档案名称</span><input value={name} maxLength={80} onChange={(event) => setName(event.target.value)} placeholder="例如：长期生存稳定组合" /></label>
+      <button className="tool-action primary" disabled={!contextPath || !name.trim() || busy !== null} onClick={createProfile}>{busy === 'create' ? <LoaderCircle className="spin" /> : <Copy />}{busy === 'create' ? '正在重新分析并捕获' : '捕获当前配置'}</button>
+    </div>
+    {message && <div className={`profile-message ${message.tone}`}>{message.tone === 'success' ? <CheckCircle2 /> : <CircleAlert />}<span>{message.text}</span></div>}
+    {profiles.invalid.length > 0 && <div className="profile-message error"><CircleAlert /><span>{profiles.invalid.length} 个本地档案无法验证，已隔离不使用：{profiles.invalid[0].error}</span></div>}
+    <div className="profile-list">
+      {profiles.profiles.length ? profiles.profiles.map((profile) => <article className={`profile-card ${selectedId === profile.id ? 'selected' : ''}`} key={profile.id} onClick={() => { setSelectedId(profile.id); setComparison(null) }}>
+        <div className="profile-card-main"><div><b>{profile.name}</b><span>{profile.binding.kind === 'save' ? '存档' : '服务器'} · {profile.binding.name}</span></div><code>{profile.game.version} · Build {profile.game.buildId}</code><small>{profile.loadout.modIds.length} Mod ID · {profile.loadout.workshopIds.length} Workshop · {profile.catalog.completeness === 'complete' ? '完整证据' : '不完整证据'}</small></div>
+        <div className="profile-card-actions"><button className="secondary-button" disabled={busy !== null} onClick={(event) => { event.stopPropagation(); compare(profile.id) }}>{busy === 'compare' && selectedId === profile.id ? <LoaderCircle className="spin" /> : <SlidersHorizontal />}比较</button><button className="icon-button" aria-label={`导出 ${profile.name}`} disabled={busy !== null} onClick={(event) => { event.stopPropagation(); exportProfile(profile.id) }}><Archive /></button></div>
+      </article>) : <div className="profile-empty"><Database /><b>还没有 MOD 配置档案</b><span>先选择上方存档或服务器，再捕获当前配置。</span></div>}
+    </div>
+    {comparison && <div className={`profile-comparison ${comparison.status}`}>
+      <div className="profile-comparison-head"><div><span>DIFF PREVIEW</span><h3>{comparison.status === 'exact' ? '已经一致' : comparison.status === 'blocked' ? '不允许应用' : '应用前差异'}</h3></div><b>{comparison.target ? `${comparison.target.kind === 'save' ? '存档' : '服务器'} · ${comparison.target.name}` : '没有目标'}</b></div>
+      <p>{comparison.summary}</p>
+      <div className="profile-diff-stats"><div><span>将启用</span><b>{comparison.differences.enableModIds.length}</b></div><div><span>将停用</span><b>{comparison.differences.disableModIds.length}</b></div><div><span>未安装</span><b>{comparison.differences.missingInstalledModIds.length}</b></div><div><span>Mod 顺序</span><b>{comparison.differences.orderChanged ? '变化' : '一致'}</b></div><div><span>Workshop 顺序</span><b>{comparison.differences.workshopOrderChanged ? '变化' : '一致'}</b></div></div>
+      {comparison.blockers.map((blocker) => <div className="profile-evidence blocker" key={blocker}><ShieldAlert />{blocker}</div>)}
+      {comparison.warnings.map((warning) => <div className="profile-evidence warning" key={warning}><CircleAlert />{warning}</div>)}
+      {(comparison.differences.enableModIds.length > 0 || comparison.differences.disableModIds.length > 0) && <details><summary>查看 Mod ID 差异</summary><div className="profile-id-diff"><p><b>启用：</b>{comparison.differences.enableModIds.join('、') || '无'}</p><p><b>停用：</b>{comparison.differences.disableModIds.join('、') || '无'}</p></div></details>}
+      <button className="migration-execute" disabled={!comparison.canApply || comparison.status !== 'different' || !comparison.previewToken || busy !== null} onClick={apply}>{busy === 'apply' ? <LoaderCircle className="spin" /> : <ShieldCheck />}{busy === 'apply' ? '正在备份并应用' : comparison.status === 'exact' ? '无需写入' : '确认应用并保留撤销备份'}</button>
+    </div>}
+  </section>
+}
 
 export const App = (): React.JSX.Element => {
   const [snapshot, setSnapshot] = useState<LauncherSnapshot | null>(null)
@@ -906,7 +1013,7 @@ export const App = (): React.JSX.Element => {
                 </section>
                 <section className={`analysis-result-workspace ${analysisMode}`} role="tabpanel">
                   <div className="analysis-result-heading"><div className={`tool-icon ${analysisMode === 'compatibility' ? 'blue' : ''}`}>{analysisMode === 'integrity' ? <ClipboardCheck /> : <ShieldCheck />}</div><div><span>{analysisMode === 'integrity' ? 'INTEGRITY WORKSPACE' : 'COMPATIBILITY WORKSPACE'}</span><h3>{analysisMode === 'integrity' ? '完整性分析结果' : '兼容性分析结果'}</h3></div></div>
-                  {analysisMode === 'integrity' ? <>{integrityLoading ? <div className="compatibility-loading"><LoaderCircle className="spin" /><div><b>正在核对版本实体</b><span>读取基线清单、计算 SHA-256 并验证快速版引用</span></div></div> : integrityReport ? <IntegrityResults report={integrityReport} /> : <div className="analysis-empty"><ClipboardCheck /><b>尚未分析当前版本的完整性</b><span>运行后，这里只显示文件、基线、目录和引用关系的证据。</span><button className="secondary-button" disabled={snapshot?.activeSource === 'Steam' ? !steam?.detected : !snapshot?.isHealthy} onClick={() => void runIntegrityAnalysis()}><RefreshCw />开始完整性分析</button></div>}</> : <>{compatibilityLoading ? <div className="compatibility-loading"><LoaderCircle className="spin" /><div><b>正在建立 MOD 关系数据库</b><span>扫描版本变体、依赖、存档、服务器和有效文件层</span></div></div> : compatibilityReport ? <CompatibilityResults report={compatibilityReport} /> : <div className="analysis-empty"><ShieldCheck /><b>尚未分析当前 MOD 组合</b><span>运行后，这里只显示版本规则、依赖、顺序、配置和文件覆盖结论。</span><button className="secondary-button" disabled={snapshot?.activeSource === 'Steam' ? !steam?.detected : !snapshot?.isHealthy} onClick={() => void runCompatibilityAnalysis()}><Wrench />开始兼容性分析</button></div>}</>}
+                  {analysisMode === 'integrity' ? <>{integrityLoading ? <div className="compatibility-loading"><LoaderCircle className="spin" /><div><b>正在核对版本实体</b><span>读取基线清单、计算 SHA-256 并验证快速版引用</span></div></div> : integrityReport ? <IntegrityResults report={integrityReport} /> : <div className="analysis-empty"><ClipboardCheck /><b>尚未分析当前版本的完整性</b><span>运行后，这里只显示文件、基线、目录和引用关系的证据。</span><button className="secondary-button" disabled={snapshot?.activeSource === 'Steam' ? !steam?.detected : !snapshot?.isHealthy} onClick={() => void runIntegrityAnalysis()}><RefreshCw />开始完整性分析</button></div>}</> : <>{compatibilityLoading ? <div className="compatibility-loading"><LoaderCircle className="spin" /><div><b>正在建立 MOD 关系数据库</b><span>扫描版本变体、依赖、存档、服务器和有效文件层</span></div></div> : compatibilityReport ? <><CompatibilityResults report={compatibilityReport} /><ModProfilesWorkspace report={compatibilityReport} onContentChanged={runCompatibilityAnalysis} /></> : <div className="analysis-empty"><ShieldCheck /><b>尚未分析当前 MOD 组合</b><span>运行后，这里只显示版本规则、依赖、顺序、配置和文件覆盖结论。</span><button className="secondary-button" disabled={snapshot?.activeSource === 'Steam' ? !steam?.detected : !snapshot?.isHealthy} onClick={() => void runCompatibilityAnalysis()}><Wrench />开始兼容性分析</button></div>}</>}
                 </section>
               </div> : <section className="share-import-panel enter delay-2">
                 <div className="share-hero"><div className="share-icon"><PackageOpen /></div><div><span className="eyebrow">PZ SHARE PACKAGE · V1</span><h2>共享清单制作与接收</h2><p>共享的是可审计的版本身份、启用清单和内容指纹；游戏本体、普通 Workshop MOD、本地 MOD 与个人数据都不会进入文件。</p></div></div>

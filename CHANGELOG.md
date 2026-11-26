@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added version-bound MOD profiles for saves and server configurations, including ordered Mod IDs, Workshop IDs and catalog evidence.
+- Added compare-before-write previews with missing-install, game-identity and context-format blockers plus explicit enable, disable and order differences.
+- Added digest-verified `.pzprofile` import/export with local save paths removed from exported files.
+- Added atomic profile application, crash-safe `Prepared`/`Applied` receipts and hash-guarded one-step undo that refuses to overwrite later user changes.
 - Added a rebuildable MOD catalog containing Workshop/Mod IDs, B42 effective layers, dependency indexes, per-file SHA-256 evidence and explicit JAR/Class/native-binary inventories.
 - Added catalog completeness boundaries for unresolved variants, missing Mod IDs, unreadable or changing files, and safely skipped directory links.
 - Connected the catalog digest, coverage and binary counts to compatibility reports and the maintenance UI.

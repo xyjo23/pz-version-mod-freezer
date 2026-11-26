@@ -459,6 +459,81 @@ export type ModCatalog = {
   mods: ModCatalogEntry[]
 }
 
+export type ModProfile = {
+  format: 'pz-vault-mod-profile'
+  schemaVersion: 1
+  id: string
+  name: string
+  createdAt: string
+  updatedAt: string
+  game: {
+    source: 'Steam' | 'Frozen'
+    sourceLabel: string
+    version: string
+    buildId: string
+    revision: string | null
+    jarSha256: string | null
+  }
+  binding: {
+    kind: 'save' | 'server'
+    name: string
+    sourcePath: string | null
+  }
+  loadout: {
+    modIds: string[]
+    workshopIds: string[]
+  }
+  catalog: {
+    digest: string
+    completeness: ModCatalog['completeness']
+  }
+  digestAlgorithm: 'SHA-256'
+  profileDigest: string
+}
+
+export type ModProfileListResult = {
+  profiles: ModProfile[]
+  invalid: Array<{ file: string; error: string }>
+}
+
+export type ModProfileComparison = {
+  profileId: string
+  comparedAt: string
+  status: 'exact' | 'different' | 'blocked'
+  canApply: boolean
+  target: CompatibilityContext | null
+  previewToken: string | null
+  summary: string
+  gameIdentityMatches: boolean
+  sourceFileSha256: string | null
+  differences: {
+    missingInstalledModIds: string[]
+    missingWorkshopIds: string[]
+    enableModIds: string[]
+    disableModIds: string[]
+    orderChanged: boolean
+    workshopOrderChanged: boolean
+  }
+  blockers: string[]
+  warnings: string[]
+}
+
+export type ModProfileMutationResult = {
+  ok: boolean
+  message: string
+  operationId: string | null
+  backupPath: string | null
+  comparison?: ModProfileComparison
+}
+
+export type ModProfileTransferResult = {
+  canceled: boolean
+  ok: boolean
+  message: string
+  filePath: string | null
+  profile?: ModProfile
+}
+
 export type CompatibilityContext = {
   kind: 'save' | 'server'
   name: string
@@ -532,6 +607,13 @@ export type VaultApi = {
   listCurrentMods: () => Promise<ModSummary[]>
   analyzeIntegrity: () => Promise<IntegrityReport>
   analyzeCompatibility: () => Promise<CompatibilityReport>
+  listModProfiles: () => Promise<ModProfileListResult>
+  createModProfile: (name: string, contextPath?: string) => Promise<ModProfile>
+  compareModProfile: (profileId: string, contextPath?: string) => Promise<ModProfileComparison>
+  applyModProfile: (profileId: string, previewToken: string, contextPath?: string) => Promise<ModProfileMutationResult>
+  undoModProfile: () => Promise<ModProfileMutationResult>
+  exportModProfile: (profileId: string) => Promise<ModProfileTransferResult>
+  importModProfile: () => Promise<ModProfileTransferResult>
   listVersions: () => Promise<FreezeVersionSummary[]>
   importVersion: () => Promise<VersionImportResult>
   createSharePackage: () => Promise<SharePackageCreateResult>

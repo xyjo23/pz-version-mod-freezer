@@ -1,4 +1,4 @@
-import type { FreezeVersionSummary, LauncherSnapshot, VaultApi } from '../../shared/types'
+import type { FreezeVersionSummary, LauncherSnapshot, ModProfile, VaultApi } from '../../shared/types'
 
 const previewSnapshot: LauncherSnapshot = {
   activeSource: 'Frozen',
@@ -27,6 +27,15 @@ const previewSnapshot: LauncherSnapshot = {
   issue: null
 }
 
+const previewProfile: ModProfile = {
+  format: 'pz-vault-mod-profile', schemaVersion: 1, id: '11111111-1111-4111-8111-111111111111', name: '长期生存 MOD 清单',
+  createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  game: { source: 'Frozen', sourceLabel: '长期生存主档', version: '42.22.2', buildId: '26486631', revision: '3d39148846', jarSha256: 'A'.repeat(64) },
+  binding: { kind: 'save', name: 'save', sourcePath: 'C:\\Users\\victor\\Zomboid\\Saves\\Sandbox\\save\\mods.txt' },
+  loadout: { modIds: ['CommonSense'], workshopIds: ['2392709985'] }, catalog: { digest: 'B'.repeat(64), completeness: 'complete' },
+  digestAlgorithm: 'SHA-256', profileDigest: 'C'.repeat(64)
+}
+
 export const installBrowserPreviewApi = (): void => {
   if (!import.meta.env.DEV || window.vault) return
 
@@ -43,6 +52,13 @@ export const installBrowserPreviewApi = (): void => {
     ],
     analyzeIntegrity: async () => ({ schemaVersion: 1, generatedAt: new Date().toISOString(), source: 'Frozen', sourceLabel: '长期生存主档', plainSummary: '检查完成：18432 个文件均与登记状态一致。', reportPath: 'D:\\PZ_Freeze_Manager\\reports\\integrity\\latest-frozen.json', verdict: 'pass', storageMode: 'FullCopy', methodology: ['逐文件计算 SHA-256'], limitations: ['不判断 MOD 兼容性'], summary: { checkedFiles: 18432, missingFiles: 0, changedFiles: 0, addedFiles: 0, unreadableFiles: 0, brokenReferences: 0, findings: 1 }, findings: [{ id: 'integrity-pass', severity: 'pass', confidence: 'confirmed', category: 'baseline', title: '内容与登记基线一致', summary: '游戏和 MOD 文件均通过 SHA-256 比对。', impact: '版本仍保持冻结时内容。', action: '无需处理。', rule: 'FULL-BASELINE-COMPLETE', evidence: ['游戏：检查 17420，缺失 0，变化 0', 'MOD：检查 1012，缺失 0，变化 0'] }], rawOutput: '游戏：检查 17420，缺失 0，变化 0\nMOD：检查 1012，缺失 0，变化 0' }),
     analyzeCompatibility: async () => ({ schemaVersion: 1, generatedAt: new Date().toISOString(), source: 'Frozen', sourceLabel: '长期生存主档', scopeLabel: '最近修改的存档：save', plainSummary: '没有发现明确阻断，但有 2 项需要核对。', reportPath: 'D:\\PZ_Freeze_Manager\\reports\\compatibility\\latest-frozen.json', modCatalog: { path: 'D:\\PZ_Freeze_Manager\\reports\\mod-catalog\\latest-frozen.json', digest: 'PREVIEW', completeness: 'complete', files: 12345, jars: 4, classes: 18, nativeBinaries: 1 }, identity: { version: '42.22.2', revision: '3d39148846', buildId: '26486631', jarSha256: 'PREVIEW', status: 'verified', source: 'binary', cachedVersion: '42.22.2', cachedRevision: '3d39148846', evidence: ['Core.class：42.22.2'] }, verdict: 'warning', methodology: ['解析 B42 MOD 目录和 mod.info'], limitations: ['静态分析不能执行 MOD 代码'], summary: { installedMods: 198, activeMods: 189, workshopProjects: 156, blockers: 0, warnings: 2, unknowns: 1, passes: 3, overlapPaths: 538, identicalOverlapPaths: 42, baseGameOverrides: 694 }, analysisContext: { kind: 'save', name: 'save', path: 'C:\\Users\\victor\\Zomboid\\Saves\\Sandbox\\save\\mods.txt', modIds: ['CommonSense'], workshopIds: [], missingModIds: [], missingWorkshopIds: [] }, activeContext: { kind: 'save', name: 'save', path: 'C:\\Users\\victor\\Zomboid\\Saves\\Sandbox\\save\\mods.txt', modIds: ['CommonSense'], workshopIds: [], missingModIds: [], missingWorkshopIds: [] }, serverContexts: [], issues: [{ id: 'identity-verified', severity: 'pass', confidence: 'confirmed', appliesToScope: true, category: 'identity', title: '游戏身份已从二进制确认', summary: '42.22.2 · Build 26486631', impact: '分析使用了实际游戏版本。', action: '无需处理。', rule: 'GAME-IDENTITY', evidence: ['Core.class'], modIds: [] }, { id: 'overlaps-lua', severity: 'unknown', confidence: 'inferred', appliesToScope: true, category: 'files', title: 'Lua 路径存在不同内容', summary: '需要运行时语义分析。', impact: '无法仅凭路径判断。', action: '结合日志核对。', rule: 'FILE-OVERLAP-LUA', evidence: ['media/lua/client/example.lua'], modIds: ['CommonSense'] }], overlaps: [], mods: [] }),
+    listModProfiles: async () => ({ profiles: [previewProfile], invalid: [] }),
+    createModProfile: async (name) => ({ ...previewProfile, name }),
+    compareModProfile: async () => ({ profileId: previewProfile.id, comparedAt: new Date().toISOString(), status: 'exact', canApply: true, target: { kind: 'save', name: 'save', path: previewProfile.binding.sourcePath!, modIds: ['CommonSense'], workshopIds: [], missingModIds: [], missingWorkshopIds: [] }, previewToken: 'D'.repeat(64), summary: '当前上下文已经与配置档案一致。', gameIdentityMatches: true, sourceFileSha256: 'E'.repeat(64), differences: { missingInstalledModIds: [], missingWorkshopIds: [], enableModIds: [], disableModIds: [], orderChanged: false, workshopOrderChanged: false }, blockers: [], warnings: [] }),
+    applyModProfile: async () => ({ ok: true, message: '当前上下文已经一致。', operationId: null, backupPath: null }),
+    undoModProfile: async () => ({ ok: false, message: '没有可撤销的配置档案操作。', operationId: null, backupPath: null }),
+    exportModProfile: async () => ({ canceled: false, ok: true, message: '已导出。', filePath: 'E:\\profile.pzprofile', profile: previewProfile }),
+    importModProfile: async () => ({ canceled: false, ok: true, message: '已导入。', filePath: 'E:\\profile.pzprofile', profile: previewProfile }),
     listVersions: async (): Promise<FreezeVersionSummary[]> => [
       { id: 'B42.12.3_build20489167', name: 'B42.21.0_build25485521_20261104_195505_长期生存主档', freezeRoot: previewSnapshot.config!.FreezeRoot, version: '42.12.3', buildId: '20489167', created: new Date().toISOString(), workshopProjectCount: 154, effectiveModCount: 287, origin: 'Managed', isActive: true, isHealthy: true },
       { id: 'B41.78.16_buildLegacy', name: '共享包安装复核失败示例', freezeRoot: 'D:\\PZ_Freeze_Manager\\frozen\\B41.78.16', version: '41.78.16', buildId: 'legacy', created: new Date(Date.now() - 86400000 * 30).toISOString(), workshopProjectCount: 128, effectiveModCount: 164, origin: 'External', shareInstallStatus: 'Quarantined', isActive: false, isHealthy: false },
