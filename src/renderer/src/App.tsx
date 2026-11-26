@@ -88,12 +88,13 @@ const helpTutorials: HelpTutorial[] = [
         { title: '执行切换', detail: '点击“切换”，等待版本标记变为“当前”。切换只更新指向，不会删除或移动版本文件。' }
       ] },
       { title: '启动并验证', intro: '冻结版仍通过 Steam 身份启动，但游戏文件、缓存和存档来自隔离目录。', steps: [
-        { title: '返回控制台启动', detail: '确认名称、版本和 Build 后点击“启动当前版本”，不要同时启动另一个 Project Zomboid 实例。' },
+        { title: '返回控制台启动', detail: '确认名称、版本和 Build 后点击“启动当前版本”，不要同时启动另一个 Project Zomboid 实例。冻结版需要 Steam 身份；若 Steam 未运行，启动器会先打开客户端并等待进入已登录状态。' },
+        { title: '阅读启动观察结果', detail: 'Steam 原版会等待进程出现，冷启动时请在 Steam 的“选择启动选项”窗口确认默认模式；检测到进程后继续观察 12 秒。显示“持续存活”只表示没有立即闪退；若未检测到或提前退出，终端会给出启动报告路径和本次新增的严重日志证据。' },
         { title: '检查游戏主菜单', detail: '进入游戏后核对右下角版本号，并在 MOD 页面确认启用列表与目标冻结版一致。' }
       ] }
     ],
     result: '控制台显示目标版本，游戏主菜单版本一致，且独立存档目录可见，说明切换生效。',
-    warning: '同一 Steam 账号通常不能同时运行两份受 Steam 管理的游戏；联机还受服务器 Build、MOD ID 和加载顺序约束。'
+    warning: 'Steam 登录必须由你自己完成，启动器不会填写账号或密码。同一 Steam 账号通常不能同时运行两份受 Steam 管理的游戏；联机还受服务器 Build、MOD ID 和加载顺序约束。'
   },
   {
     id: 'versions', number: '03', eyebrow: 'VERSION LIBRARY', title: '版本管理',
@@ -159,7 +160,8 @@ const helpTutorials: HelpTutorial[] = [
     sections: [
       { title: '启动或闪退', intro: '先区分启动器未拉起游戏、游戏启动后退出、进入存档后崩溃。', steps: [
         { title: '核对版本身份', detail: '查看控制台 Build、游戏主菜单版本以及目标服务器版本，三者必须匹配。' },
-        { title: '查看日志', detail: '打开启动器日志和当前版本 cache 下的 console.txt，搜索 ERROR、Exception 和最后加载的 MOD。' },
+        { title: '读取启动报告', detail: '启动后在终端复制“启动报告”路径。报告记录来源、预期版本、PID、观察结论和对应 console.txt；它不会把历史错误自动归因于本次启动。' },
+        { title: '查看原始日志', detail: '再检查当前版本 cache 下的 console.txt。报告只摘录本次观察窗口内新增的高严重度行，普通警告和进入存档后的问题仍需结合原始日志。' },
         { title: '最小化验证', detail: '保留原版本不动，在副本或新测试版本中停用可疑 MOD，逐批恢复以定位问题。' }
       ] },
       { title: '迁移或 MOD 异常', intro: '不要用覆盖复制修补未知状态，先确定缺失的是文件、身份还是依赖。', steps: [
@@ -168,8 +170,8 @@ const helpTutorials: HelpTutorial[] = [
         { title: '回退到健康版本', detail: '直接切换回此前健康冻结版；切换操作不会删除故障版本，便于继续取证。' }
       ] }
     ],
-    result: '能稳定复现、找到对应日志证据，并在健康版本或最小 MOD 集合中恢复启动，才算完成定位。',
-    warning: '不要在没有备份时删除 Saves、Workshop 内容或整个版本目录。需要反馈时请附版本名、Build、操作时间和日志末段。'
+    result: '能稳定复现、找到对应启动报告与日志证据，并在健康版本或最小 MOD 集合中恢复启动，才算完成定位。',
+    warning: '“进程持续存活 12 秒”不等于已经进入主菜单，也不等于可以正常加载存档或联机。不要在没有备份时删除 Saves、Workshop 内容或整个版本目录。需要反馈时请附版本名、Build、操作时间、启动报告和日志末段。'
   }
 ]
 
@@ -179,7 +181,7 @@ const HelpTopicIcon = ({ id }: { id: HelpTopicId }): React.JSX.Element => {
 }
 
 const actionPlans: Record<LauncherAction, string[]> = {
-  Launch: ['读取并校验当前冻结配置', '绑定独立缓存与启动参数', '启动所选 Project Zomboid 版本'],
+  Launch: ['读取并校验当前版本身份', '绑定对应缓存与安全启动参数', '检测进程并生成启动观察报告'],
   Verify: ['载入游戏与模组 SHA-256 基线', '扫描冻结目录并逐项比对', '生成完整性校验报告'],
   BackupSave: ['检查独立缓存与存档目录', '创建存档压缩快照', '计算摘要并写入备份记录'],
   MigrateSafe: ['验证来源、目标和可用空间', '完整复制游戏、MOD、配置与独立存档', '登记新版本并切换当前目标'],

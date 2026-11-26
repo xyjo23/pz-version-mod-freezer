@@ -10,7 +10,7 @@ Status meanings:
 |---|---|---|---|
 | Window frame | native maximize/restore/minimize/return; close; 980×640 minimum layout | PASS | multi-monitor and DPI scaling |
 | Navigation | Console, Versions, Maintenance, Help, Version Details, Settings | PASS | none for current navigation set |
-| Console | details drawer, Mods drawer, launch action result, four radar blips | PASS-MOCK | real launch and OS folder actions |
+| Console | details drawer, Mods drawer, launch action result, four radar blips | PASS | OS folder actions on a clean machine |
 | Console radar | unique bounded positions, healthy activation, quarantined activation guard | PASS-MOCK | real backend rejection log |
 | Version list | real Steam plus frozen entries, details drawer, native import picker and isolated real external import/activation | PASS | user-chosen external library smoke test |
 | Quarantined version | readable details, disabled switch, explicit quarantine explanation | PASS | packaged build regression |
@@ -22,7 +22,7 @@ Status meanings:
 | Share package | real create/transfer/inspect/install; reference-only boundary; digest tamper, missing MOD, drift and weak identity blockers; verified receipt, quarantine and repeated-install guard | PASS | signed producer identity and receiver-side loadout application are later format/workflow work |
 | Help center | packaged cards, topic reset, modal isolation, Tab containment, Escape/focus restoration and small-window scrolling | PASS | screen-reader narration review |
 | Settings | switches, terminal/radar/save-protection behavior and packaged restart persistence | PASS | none for current settings set |
-| Terminal | floating entry, open state, disable removes drawer | PASS | real running/error output and pin behavior |
+| Terminal | floating entry, open state, disable removes drawer, real launch observation and report path | PASS | extended-session pin behavior |
 | Destructive interruption | access denied, occupied files, low-space preflight and forced process termination before atomic commit | PASS | sudden power loss and filesystem corruption |
-| Packaged application | Setup clean install, 0.8.5→0.8.6 in-place upgrade, installed launch, silent uninstall and Portable launch | PASS | signed-binary reputation on a clean machine |
-| Project Zomboid | Steam/frozen launch and main-menu identity | DEFERRED | real-game round |
+| Packaged application | Setup clean install, 0.8.5→0.8.6 upgrade, uninstall, plus 0.8.7 Portable launch | PASS | signed-binary reputation on a clean machine |
+| Project Zomboid | Steam/frozen launch, Steam identity and main-menu version | PASS | real multiplayer server join and save loading |

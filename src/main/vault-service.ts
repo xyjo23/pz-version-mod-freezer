@@ -10,6 +10,8 @@ import type { ActionResult, FreezeConfig, FreezeVersionSummary, LauncherAction, 
 import { readGameIdentity } from './game-identity'
 import { discoverLocalMods, discoverWorkshopMods, toModSummaries } from './mod-resolver'
 import { frozenLaunchArguments } from './launch-arguments'
+import { monitorExternalLaunch, monitorSpawnedLaunch, snapshotConsole } from './launch-monitor'
+import { ensureSteamClientRunning } from './steam-client'
 import { detectSteamInstallation, launchSteamGame, validateSteamGame } from './steam-service'
 
 const ACTIONS: ReadonlySet<LauncherAction> = new Set(['Launch', 'Verify', 'BackupSave'])
@@ -483,8 +485,26 @@ export const runAction = async (action: LauncherAction): Promise<ActionResult> =
   const snapshot = await getSnapshot()
   if (snapshot.activeSource === 'Steam') {
     if (action === 'Launch') {
-      await launchSteamGame()
-      return { ok: true, action, message: 'Steam 原版已启动。', output: 'steam://run/108600', finishedAt: new Date().toISOString() }
+      const steam = await detectSteamInstallation()
+      if (!steam.detected || !steam.executablePath || !steam.cachePath) {
+        throw new Error(steam.issue ?? '无法确认 Steam 原版的安装目录。')
+      }
+      const reportRoot = path.join(snapshot.managerRoot ?? app.getPath('userData'), 'reports', 'launch')
+      const result = await monitorExternalLaunch(
+        async () => { await launchSteamGame() },
+        {
+          source: 'Steam',
+          executable: steam.executablePath,
+          args: [],
+          cachePath: steam.cachePath,
+          reportRoot,
+          expectedVersion: steam.version,
+          expectedBuildId: steam.buildId,
+          imageName: path.basename(steam.executablePath),
+          detectionMs: 120_000
+        }
+      )
+      return { ok: result.ok, action, message: result.message, output: result.output, finishedAt: new Date().toISOString() }
     }
     if (action === 'Verify') {
       await validateSteamGame()
@@ -495,6 +515,8 @@ export const runAction = async (action: LauncherAction): Promise<ActionResult> =
   if (!snapshot.isHealthy || !snapshot.config) {
     throw new Error(snapshot.issue ?? 'Select a valid frozen version first.')
   }
+
+  if (action === 'Launch') return runNativeAction(action, snapshot.config)
 
   if (!snapshot.enginePath || !existsSync(snapshot.enginePath) || (snapshot.config.StorageMode === 'ThinReference' && action !== 'BackupSave')) {
     return runNativeAction(action, snapshot.config)
@@ -599,22 +621,23 @@ const runNativeAction = async (action: LauncherAction, config: FreezeConfig): Pr
   if (action === 'Launch') {
     const executable = path.join(config.GamePath, 'ProjectZomboid64.exe')
     if (!existsSync(executable)) throw new Error(`游戏程序不存在：${executable}`)
+    const steam = await detectSteamInstallation()
+    if (!steam.steamPath) throw new Error('冻结版仍需要 Steam 身份，但当前没有检测到 Steam 客户端。')
+    await ensureSteamClientRunning(steam.steamPath)
     const args = frozenLaunchArguments(config.LaunchArguments, config.CachePath)
+    const before = await snapshotConsole(config.CachePath)
     const child = spawn(executable, args, { cwd: config.GamePath, detached: true, stdio: 'ignore', windowsHide: false })
-    const earlyExit = await new Promise<number | null>((resolve, reject) => {
-      const timer = setTimeout(() => resolve(null), 2_000)
-      child.once('error', (error) => {
-        clearTimeout(timer)
-        reject(error)
-      })
-      child.once('exit', (code) => {
-        clearTimeout(timer)
-        resolve(code ?? -1)
-      })
-    })
-    if (earlyExit !== null) throw new Error(`游戏进程在启动后 2 秒内退出，退出码 ${earlyExit}。请检查游戏目录、Java 参数和缓存路径。`)
-    child.unref()
-    return { ok: true, action, message: '冻结版本已启动并通过早期存活检查。', output: `${executable}\n${args.join(' ')}\nPID=${child.pid ?? 'unknown'}`, finishedAt: finishedAt() }
+    const result = await monitorSpawnedLaunch(child, {
+      source: 'Frozen',
+      executable,
+      args,
+      cachePath: config.CachePath,
+      reportRoot: path.join(config.ReportPath || path.join(config.FreezeRoot, 'reports'), 'launch'),
+      expectedVersion: config.Version ?? 'unknown',
+      expectedBuildId: config.BuildID ?? 'unknown'
+    }, before)
+    if (result.status === 'running') child.unref()
+    return { ok: result.ok, action, message: result.message, output: result.output, finishedAt: finishedAt() }
   }
 
   if (action === 'Verify') {
