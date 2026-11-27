@@ -6,6 +6,7 @@ import type { LauncherAction } from '../shared/types'
 import { analyzeCompatibility } from './compatibility-service'
 import { analyzeIntegrity } from './integrity-service'
 import { executeMigration, previewMigration } from './migration-service'
+import { loadModCenter } from './mod-center-service'
 import { applyModProfile, compareModProfile, createModProfile, exportModProfile, importModProfile, listModProfiles, undoModProfile } from './mod-profile-service'
 import { createSharePackage, inspectSharePackage, installSharePackage } from './share-package-service'
 import { detectSteamInstallation, launchSteamGame, validateSteamGame } from './steam-service'
@@ -64,6 +65,7 @@ app.whenReady().then(() => {
   ipcMain.handle('vault:list-current-mods', listCurrentMods)
   ipcMain.handle('vault:analyze-integrity', () => analyzeIntegrity())
   ipcMain.handle('vault:analyze-compatibility', analyzeCompatibility)
+  ipcMain.handle('vault:load-mod-center', loadModCenter)
   ipcMain.handle('vault:list-mod-profiles', listModProfiles)
   ipcMain.handle('vault:create-mod-profile', (_event, name: string, contextPath?: string) => createModProfile(name, contextPath))
   ipcMain.handle('vault:compare-mod-profile', (_event, profileId: string, contextPath?: string) => compareModProfile(profileId, contextPath))

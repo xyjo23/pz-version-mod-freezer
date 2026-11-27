@@ -459,6 +459,60 @@ export type ModCatalog = {
   mods: ModCatalogEntry[]
 }
 
+export type ModCenterEntry = {
+  catalogId: string
+  name: string
+  modId: string | null
+  workshopId: string | null
+  source: 'Workshop' | 'Local'
+  rootPath: string
+  active: boolean
+  version: ModCatalogEntry['version']
+  dependencies: ModCatalogEntry['dependencies'] & {
+    missingRequired: string[]
+    activeIncompatible: string[]
+    requiredBy: Array<{ catalogId: string; name: string; modId: string | null }>
+  }
+  content: {
+    totalFiles: number
+    totalBytes: number
+    contentDigest: string
+    kindCounts: Record<ModCatalogFileKind, number>
+    layerOverrides: number
+    unreadable: number
+    skippedLinks: number
+    jars: number
+    classes: number
+    nativeBinaries: number
+  }
+  flags: {
+    duplicateModId: boolean
+    unresolved: boolean
+    hasBinaryCode: boolean
+    incompleteEvidence: boolean
+  }
+  evidence: string[]
+}
+
+export type ModCenterSnapshot = {
+  schemaVersion: 1
+  generatedAt: string
+  source: ModCatalog['source']
+  sourceLabel: string
+  catalogPath: string
+  catalogDigest: string
+  completeness: ModCatalog['completeness']
+  game: GameIdentity
+  summary: ModCatalog['summary'] & {
+    missingDependencies: number
+    activeIncompatibilities: number
+    modsWithBinaryCode: number
+  }
+  methodology: string[]
+  limitations: string[]
+  mods: ModCenterEntry[]
+}
+
 export type ModProfile = {
   format: 'pz-vault-mod-profile'
   schemaVersion: 1
@@ -607,6 +661,7 @@ export type VaultApi = {
   listCurrentMods: () => Promise<ModSummary[]>
   analyzeIntegrity: () => Promise<IntegrityReport>
   analyzeCompatibility: () => Promise<CompatibilityReport>
+  loadModCenter: () => Promise<ModCenterSnapshot>
   listModProfiles: () => Promise<ModProfileListResult>
   createModProfile: (name: string, contextPath?: string) => Promise<ModProfile>
   compareModProfile: (profileId: string, contextPath?: string) => Promise<ModProfileComparison>

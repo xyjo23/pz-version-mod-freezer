@@ -14,6 +14,8 @@ import {
   FolderOpen,
   Gamepad2,
   HardDrive,
+  FileCode2,
+  GitBranch,
   LayoutDashboard,
   LoaderCircle,
   Maximize2,
@@ -25,6 +27,7 @@ import {
   Play,
   RefreshCw,
   ScrollText,
+  Search,
   Settings2,
   ShieldCheck,
   ShieldAlert,
@@ -36,12 +39,12 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import type { ActionResult, AnalysisConfidence, CompatibilityContext, CompatibilityReport, CompatibilitySeverity, FileOverlapClassification, FreezeVersionSummary, IntegrityReport, LauncherAction, LauncherSnapshot, MigrationMode, MigrationPreview, MigrationSourceType, ModProfile, ModProfileComparison, ModProfileListResult, ModSummary, SharePackageInspection, SteamInstallation } from '../../shared/types'
+import type { ActionResult, AnalysisConfidence, CompatibilityContext, CompatibilityReport, CompatibilitySeverity, FileOverlapClassification, FreezeVersionSummary, IntegrityReport, LauncherAction, LauncherSnapshot, MigrationMode, MigrationPreview, MigrationSourceType, ModCenterEntry, ModCenterSnapshot, ModProfile, ModProfileComparison, ModProfileListResult, ModSummary, SharePackageInspection, SteamInstallation } from '../../shared/types'
 import { VaultMark } from './VaultMark'
 import { layoutRadarItems } from './radar-layout'
 
 type Notice = { kind: 'success' | 'error'; text: string } | null
-type AppView = 'console' | 'versions' | 'maintenance' | 'help' | 'settings'
+type AppView = 'console' | 'mods' | 'versions' | 'maintenance' | 'help' | 'settings'
 type VersionDetailSelection = { kind: 'Steam' } | { kind: 'Frozen'; id: string }
 type HelpTopicId = 'getting-started' | 'console' | 'versions' | 'migration' | 'compatibility' | 'troubleshooting'
 type HelpTutorial = {
@@ -141,7 +144,8 @@ const helpTutorials: HelpTutorial[] = [
     prerequisites: ['已切换到要检查的版本', 'Workshop 与本地 MOD 文件可访问', '如需对照存档或服务器，相关配置必须位于当前版本缓存中'],
     sections: [
       { title: '运行分析', intro: '分析器按游戏实际目录规则选择 MOD 版本，不会只看 Workshop 标题。', steps: [
-        { title: '进入完整性与兼容性', detail: '先确认页面对应当前版本，再点击“开始兼容性分析”。' },
+        { title: '先查看 MOD 中心', detail: '在 MOD 中心搜索 Mod ID，核对 B42 生效层、依赖、被依赖关系、文件类型和内容摘要。页面是只读的，不会执行或修改 MOD。' },
+        { title: '进入完整性与兼容性', detail: '先确认页面对应当前版本，再点击“开始兼容性分析”，查看整个启用组合的结论。' },
         { title: '理解身份关系', detail: 'Workshop ID 是发布项目，Mod ID 是游戏加载身份；同一 Workshop 可包含多个 Mod ID 和版本变体。' }
       ] },
       { title: '处理报告', intro: '按严重程度从上到下处理，并保留报告中的路径与 ID 证据。', steps: [
@@ -150,7 +154,7 @@ const helpTutorials: HelpTutorial[] = [
         { title: '文件重叠', detail: '配置叠加、资源覆盖和代码覆盖含义不同；代码或地图覆盖需要重点核查加载顺序。' }
       ] }
     ],
-    result: '阻断项归零，并确认所有警告的理由后，再复制存档进行实际进服或开档验证。',
+    result: 'MOD 中心中的缺失依赖、重复 ID 等明确问题已处理，兼容性报告阻断项归零，并确认所有警告理由后，再复制存档进行实际进服或开档验证。',
     warning: '“通过”代表静态证据未发现已知问题，不保证所有 MOD 在运行时绝对兼容。更新 MOD 后应重新分析。'
   },
   {
@@ -505,6 +509,90 @@ const ModProfilesWorkspace = ({ report, onContentChanged }: { report: Compatibil
   </section>
 }
 
+type ModCenterFilter = 'all' | 'active' | 'inactive' | 'issues' | 'binary' | 'workshop' | 'local'
+
+const modKindLabels: Record<string, string> = {
+  lua: 'Lua', 'pz-script': 'PZ Script', 'java-archive': 'JAR', 'jvm-bytecode': 'Class', 'native-binary': '本地二进制',
+  xml: 'XML', json: 'JSON', translation: '翻译', map: '地图', asset: '资源', media: '媒体', metadata: '元数据', other: '其他'
+}
+
+const hasModCenterIssue = (mod: ModCenterEntry): boolean => (
+  mod.flags.duplicateModId || mod.flags.unresolved || mod.flags.incompleteEvidence || mod.dependencies.missingRequired.length > 0 || mod.dependencies.activeIncompatible.length > 0
+)
+
+const ModCenterWorkspace = ({ onOpenCompatibility }: { onOpenCompatibility: () => void }): React.JSX.Element => {
+  const [snapshot, setSnapshot] = useState<ModCenterSnapshot | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [filter, setFilter] = useState<ModCenterFilter>('all')
+  const [selectedId, setSelectedId] = useState('')
+
+  const reload = useCallback(async (): Promise<void> => {
+    setLoading(true)
+    setError(null)
+    try {
+      const next = await window.vault.loadModCenter()
+      setSnapshot(next)
+      setSelectedId((current) => next.mods.some((mod) => mod.catalogId === current) ? current : next.mods[0]?.catalogId ?? '')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { void reload() }, [reload])
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    return (snapshot?.mods ?? []).filter((mod) => {
+      const matchesQuery = !needle || [mod.name, mod.modId, mod.workshopId, mod.rootPath].some((value) => value?.toLowerCase().includes(needle))
+      const matchesFilter = filter === 'all' || (filter === 'active' && mod.active) || (filter === 'inactive' && !mod.active) ||
+        (filter === 'issues' && hasModCenterIssue(mod)) || (filter === 'binary' && mod.flags.hasBinaryCode) ||
+        (filter === 'workshop' && mod.source === 'Workshop') || (filter === 'local' && mod.source === 'Local')
+      return matchesQuery && matchesFilter
+    })
+  }, [filter, query, snapshot])
+  const selected = filtered.find((mod) => mod.catalogId === selectedId) ?? filtered[0] ?? null
+  const activeKinds = selected ? Object.entries(selected.content.kindCounts).filter(([, count]) => count > 0) : []
+
+  if (loading && !snapshot) return <><section className="page-heading enter"><div><span className="eyebrow">MOD CENTER · EVIDENCE DATABASE</span><h1>MOD 中心</h1><p>正在按当前游戏版本重建统一数据库。</p></div></section><div className="mod-center-loading"><LoaderCircle className="spin" /><div><b>正在扫描 B42 版本层与有效文件</b><span>会计算内容摘要、依赖关系与二进制证据；不会执行或修改 MOD。</span></div></div></>
+
+  if (error && !snapshot) return <><section className="page-heading enter"><div><span className="eyebrow">MOD CENTER · EVIDENCE DATABASE</span><h1>MOD 中心</h1><p>统一查看当前版本的 MOD 内容和关系。</p></div></section><div className="mod-center-error"><ShieldAlert /><div><b>无法建立 MOD 中心数据库</b><span>{error}</span></div><button className="secondary-button" onClick={() => void reload()}><RefreshCw />重新扫描</button></div></>
+
+  return <>
+    <section className="page-heading mod-center-page-heading enter"><div><span className="eyebrow">MOD CENTER · EVIDENCE DATABASE</span><h1>MOD 中心</h1><p>{snapshot?.sourceLabel} · 游戏 {snapshot?.game.version} · Build {snapshot?.game.buildId}</p></div><div className="mod-center-heading-actions"><button className="secondary-button" onClick={onOpenCompatibility}><ShieldCheck />查看兼容性报告</button><button className="secondary-button" disabled={loading} onClick={() => void reload()}>{loading ? <LoaderCircle className="spin" /> : <RefreshCw />}{loading ? '正在重建' : '重新建立数据库'}</button></div></section>
+    {snapshot && <>
+      <section className="mod-center-summary enter delay-1">
+        <div><span>已识别</span><b>{snapshot.summary.discoveredMods}</b><small>{snapshot.summary.workshopProjects} 个 Workshop 项目</small></div>
+        <div><span>当前启用</span><b>{snapshot.summary.activeMods}</b><small>来自明确存档或服务器上下文</small></div>
+        <div className={snapshot.summary.missingDependencies || snapshot.summary.activeIncompatibilities ? 'danger' : ''}><span>依赖异常</span><b>{snapshot.summary.missingDependencies + snapshot.summary.activeIncompatibilities}</b><small>缺失 {snapshot.summary.missingDependencies} · 同时启用互斥 {snapshot.summary.activeIncompatibilities}</small></div>
+        <div className={snapshot.summary.duplicateModIds ? 'danger' : ''}><span>重复 Mod ID</span><b>{snapshot.summary.duplicateModIds}</b><small>同一加载身份的重复来源</small></div>
+        <div><span>代码与二进制</span><b>{snapshot.summary.modsWithBinaryCode}</b><small>含 JAR、Class 或本地二进制</small></div>
+        <div className={snapshot.completeness === 'complete' ? 'safe' : 'warning'}><span>证据覆盖</span><b>{snapshot.completeness === 'complete' ? '完整' : '不完整'}</b><small>{snapshot.summary.files} 个有效文件</small></div>
+      </section>
+      <section className="mod-center-layout enter delay-2">
+        <div className="mod-center-index">
+          <div className="mod-center-controls"><label><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称、Mod ID、Workshop ID 或路径" /></label><div className="mod-center-filters">{([
+            ['all', '全部'], ['active', '启用'], ['inactive', '未启用'], ['issues', '有问题'], ['binary', '含代码'], ['workshop', 'Workshop'], ['local', '本地']
+          ] as Array<[ModCenterFilter, string]>).map(([id, label]) => <button className={filter === id ? 'active' : ''} key={id} onClick={() => setFilter(id)}>{label}</button>)}</div></div>
+          <div className="mod-center-result-count">显示 {filtered.length} / {snapshot.mods.length} 个 MOD</div>
+          <div className="mod-center-list">{filtered.map((mod) => <button className={`mod-center-row ${selected?.catalogId === mod.catalogId ? 'selected' : ''}`} key={mod.catalogId} onClick={() => setSelectedId(mod.catalogId)}><span className={`mod-center-state ${mod.active ? 'active' : ''}`} /><div><b>{mod.name}</b><code>{mod.modId ?? '未声明 Mod ID'}</code><small>{mod.source === 'Workshop' ? `Workshop ${mod.workshopId ?? '未知'}` : '本地 MOD'} · {mod.content.totalFiles} 文件</small></div><span className="mod-center-flags">{mod.dependencies.missingRequired.length > 0 && <i className="danger">缺依赖</i>}{mod.dependencies.activeIncompatible.length > 0 && <i className="danger">启用互斥</i>}{mod.flags.duplicateModId && <i className="danger">重复 ID</i>}{mod.flags.unresolved && <i>未解析</i>}{mod.flags.hasBinaryCode && <i className="code">代码</i>}</span></button>)}{!filtered.length && <div className="mod-center-no-results"><Search /><b>没有符合条件的 MOD</b><span>调整搜索内容或筛选条件。</span></div>}</div>
+        </div>
+        <aside className="mod-center-detail">{selected ? <>
+          <header><div><span className="eyebrow">MOD EVIDENCE</span><h2>{selected.name}</h2><p>{selected.modId ?? '未声明 Mod ID'}</p></div><span className={`mod-detail-active ${selected.active ? 'active' : ''}`}>{selected.active ? '当前启用' : '当前未启用'}</span></header>
+          {(hasModCenterIssue(selected) || selected.flags.hasBinaryCode) && <div className="mod-detail-alerts">{selected.dependencies.missingRequired.length > 0 && <div className="danger"><ShieldAlert /><span><b>缺少必需依赖</b><small>{selected.dependencies.missingRequired.join('、')}</small></span></div>}{selected.dependencies.activeIncompatible.length > 0 && <div className="danger"><ShieldAlert /><span><b>声明的互斥 MOD 当前同时启用</b><small>{selected.dependencies.activeIncompatible.join('、')}</small></span></div>}{selected.flags.duplicateModId && <div className="danger"><CircleAlert /><span><b>Mod ID 存在重复来源</b><small>兼容性报告会列出所有实际目录。</small></span></div>}{selected.flags.unresolved && <div><CircleAlert /><span><b>B42 版本层未完整解析</b><small>{selected.version.resolutionIssue ?? '没有可用 Mod ID。'}</small></span></div>}{selected.flags.incompleteEvidence && <div><CircleAlert /><span><b>内容证据不完整</b><small>{selected.content.unreadable} 项不可读，{selected.content.skippedLinks} 个目录链接被跳过。</small></span></div>}{selected.flags.hasBinaryCode && <div className="code"><FileCode2 /><span><b>包含可执行代码证据</b><small>JAR {selected.content.jars} · Class {selected.content.classes} · 本地二进制 {selected.content.nativeBinaries}；这里只登记，不执行。</small></span></div>}</div>}
+          <section className="mod-detail-section"><h3>B42 版本解析</h3><dl><div><dt>目标游戏</dt><dd>{selected.version.target}</dd></div><div><dt>选中变体</dt><dd>{selected.version.selected ?? '未解析'}</dd></div><div><dt>可见变体</dt><dd>{selected.version.variants.join('、') || '仅 common'}</dd></div><div><dt>生效层</dt><dd>{selected.version.layers.length}</dd></div></dl><div className="mod-layer-list">{selected.version.layers.map((layer, index) => <span key={layer}><i>{index + 1}</i><code>{layer}</code></span>)}</div></section>
+          <section className="mod-detail-section"><h3><GitBranch />依赖与顺序</h3><div className="mod-relations"><div><span>必需依赖</span><p>{selected.dependencies.require.join('、') || '无'}</p></div><div><span>依赖此 MOD</span><p>{selected.dependencies.requiredBy.map((mod) => mod.modId ?? mod.name).join('、') || '无'}</p></div><div><span>互斥项</span><p>{selected.dependencies.incompatible.join('、') || '无'}{selected.dependencies.activeIncompatible.length ? `（当前同时启用：${selected.dependencies.activeIncompatible.join('、')}）` : ''}</p></div><div><span>应后加载</span><p>{selected.dependencies.loadAfter.join('、') || '无'}</p></div><div><span>应前加载</span><p>{selected.dependencies.loadBefore.join('、') || '无'}</p></div></div></section>
+          <section className="mod-detail-section"><h3>有效文件</h3><div className="mod-content-facts"><div><span>文件</span><b>{selected.content.totalFiles}</b></div><div><span>大小</span><b>{formatBytes(selected.content.totalBytes)}</b></div><div><span>层覆盖</span><b>{selected.content.layerOverrides}</b></div></div><div className="mod-kind-grid">{activeKinds.map(([kind, count]) => <span key={kind}><b>{count}</b>{modKindLabels[kind] ?? kind}</span>)}</div></section>
+          <section className="mod-detail-section technical"><h3>技术证据</h3><div><span>内容 SHA-256</span><code>{selected.content.contentDigest}</code></div><div><span>实际目录</span><code>{selected.rootPath}</code></div><button className="secondary-button" onClick={() => void window.vault.openPath(selected.rootPath)}><FolderOpen />打开 MOD 目录</button></section>
+        </> : <div className="mod-center-no-selection"><Database /><b>选择一个 MOD</b><span>这里会显示版本层、依赖和文件证据。</span></div>}</aside>
+      </section>
+      <section className="mod-center-footnote"><ShieldCheck /><span><b>只读工作区</b>MOD 中心每次刷新都会重新运行兼容性扫描；搜索和查看不会修改、启用、停用或执行任何 MOD。</span><code>{snapshot.catalogDigest}</code></section>
+    </>}
+  </>
+}
+
 export const App = (): React.JSX.Element => {
   const [snapshot, setSnapshot] = useState<LauncherSnapshot | null>(null)
   const [versions, setVersions] = useState<FreezeVersionSummary[]>([])
@@ -514,7 +602,7 @@ export const App = (): React.JSX.Element => {
   const [notice, setNotice] = useState<Notice>(null)
   const previewMode = import.meta.env.DEV ? new URLSearchParams(window.location.search) : null
   const previewView = previewMode?.get('view')
-  const [activeView, setActiveView] = useState<AppView>(['versions', 'maintenance', 'help', 'settings'].includes(previewView ?? '') ? previewView as AppView : 'console')
+  const [activeView, setActiveView] = useState<AppView>(['mods', 'versions', 'maintenance', 'help', 'settings'].includes(previewView ?? '') ? previewView as AppView : 'console')
   const previewHelpTopic = previewMode?.get('helpTopic') as HelpTopicId | null
   const [activeHelpTopic, setActiveHelpTopic] = useState<HelpTopicId | null>(() => helpTutorials.some((topic) => topic.id === previewHelpTopic) ? previewHelpTopic : null)
   const helpScrollRef = useRef<HTMLDivElement>(null)
@@ -942,6 +1030,7 @@ export const App = (): React.JSX.Element => {
           <div className="nav-section-label">工作区</div>
           <nav>
             <button className={`nav-item ${activeView === 'console' ? 'active' : ''}`} onClick={() => setActiveView('console')}><LayoutDashboard /><span>控制台</span></button>
+            <button className={`nav-item ${activeView === 'mods' ? 'active' : ''}`} onClick={() => setActiveView('mods')}><Database /><span>MOD 中心</span></button>
             <button className={`nav-item ${activeView === 'versions' ? 'active' : ''}`} onClick={() => setActiveView('versions')}><Boxes /><span>版本管理</span></button>
             <button className={`nav-item ${activeView === 'maintenance' ? 'active' : ''}`} onClick={() => setActiveView('maintenance')}><Wrench /><span>维护工具</span></button>
           </nav>
@@ -981,6 +1070,8 @@ export const App = (): React.JSX.Element => {
                 </>
               )}
             </>
+          ) : activeView === 'mods' ? (
+            <ModCenterWorkspace onOpenCompatibility={() => { setMaintenanceSection('integrity'); setAnalysisMode('compatibility'); setActiveView('maintenance') }} />
           ) : activeView === 'versions' ? (
             <>
               <section className="page-heading enter"><div><span className="eyebrow">GLOBAL VERSION REGISTRY</span><h1>版本集合</h1><p>集中登记 Steam 原版、所有管理器制作版本和外部导入版本；迁移目标目录不再限制这里的可见范围。</p></div><div className="page-heading-actions"><button className="secondary-button" disabled={versionImportBusy} onClick={() => void importExternalVersion()}>{versionImportBusy ? <LoaderCircle className="spin" /> : <PackageOpen />}导入外部版本</button><button className="secondary-button" onClick={() => void chooseRoot()}><FolderCog />设置迁移目标目录</button></div></section>
@@ -1086,7 +1177,7 @@ export const App = (): React.JSX.Element => {
             <div className="mods-overview"><div className="drawer-monogram"><Boxes /></div><div><b>{modsLoading ? '正在识别模组…' : `${currentMods.length} 个模组`}</b><span>名称来自模组自身的 mod.info；Workshop 编号仅作为辅助标识。</span></div></div>
             {modsLoading ? <div className="drawer-loading"><LoaderCircle className="spin" />正在读取模组名称</div> : currentMods.length ? <div className="mod-list">{currentMods.map((mod, index) => <article className="mod-list-item" key={mod.key}><div className="mod-index">{String(index + 1).padStart(2, '0')}</div><div className="mod-copy"><b>{mod.name}</b><span>{mod.modId ? `MOD ID · ${mod.modId}` : '未声明 MOD ID'}</span></div><div className={`mod-source ${mod.source === 'Local' ? 'local' : ''}`}>{mod.workshopId ? `WS ${mod.workshopId}` : '本地'}</div></article>)}</div> : <div className="mods-empty"><Boxes /><b>没有识别到模组</b><span>当前版本的模组目录为空，或其中没有可读取的模组。</span></div>}
           </div>
-          <footer className="drawer-footer mods-footer"><span>后续的启用、停用、添加和移除操作将从此抽屉接入。</span><button className="secondary-button" onClick={() => void openMods()}><RefreshCw />重新扫描</button></footer>
+          <footer className="drawer-footer mods-footer"><span>快速列表只显示名称与标识；完整关系请进入 MOD 中心。</span><button className="secondary-button" onClick={() => { setModsDrawerOpen(false); setActiveView('mods') }}><Database />MOD 中心</button><button className="secondary-button" onClick={() => void openMods()}><RefreshCw />重新扫描</button></footer>
         </aside>
       </div>
       {showTerminal && <><button className={`terminal-float-button ${isTerminalOpen ? 'open' : ''} ${isTerminalPinned ? 'pinned' : ''}`} aria-hidden={hasBlockingModal} inert={hasBlockingModal} onMouseEnter={() => setTerminalOpen(true)} onClick={() => { setTerminalOpen(true); setTerminalPinned((value) => !value) }} aria-label="打开终端"><SquareTerminal /><span>终端</span></button><aside className={`terminal-drawer ${isTerminalOpen ? 'open' : ''}`} aria-hidden={!isTerminalOpen || hasBlockingModal} inert={!isTerminalOpen || hasBlockingModal} onMouseLeave={() => { if (!isTerminalPinned && !isBusy) setTerminalOpen(false) }} aria-label="操作终端"><header><div><span className="eyebrow">VAULT TERMINAL</span><h2>操作终端</h2></div><div className="terminal-header-actions"><button className={`icon-button ${isTerminalPinned ? 'active' : ''}`} onClick={() => setTerminalPinned((value) => !value)} aria-label={isTerminalPinned ? '取消固定终端' : '固定终端'}>{isTerminalPinned ? <PinOff /> : <Pin />}</button><button className="icon-button" onClick={() => { setTerminalOpen(false); setTerminalPinned(false) }} aria-label="关闭终端"><X /></button></div></header><div className="terminal-body"><div className="terminal-status"><span className={`terminal-dot ${isBusy ? 'running' : lastResult?.ok === false ? 'error' : ''}`} /><div><b>{isBusy ? '正在执行' : lastResult ? '操作已结束' : '终端待命'}</b><small>{terminalAction ?? '等待选择操作'}</small></div></div><div className="terminal-screen"><div className="terminal-command"><span className="prompt">pz-vault&gt;</span> {terminalAction ? terminalAction.toLowerCase() : 'idle'}</div>{terminalAction ? <>{terminalPlan.map((step, index) => <div className="terminal-plan" key={step}><span>[PLAN {String(index + 1).padStart(2, '0')}]</span>{step}</div>)}{isBusy && <div className="terminal-running"><span>[RUNNING]</span>PowerShell 引擎正在执行，请等待返回结果……</div>}{lastResult && <><div className={lastResult.ok ? 'terminal-complete' : 'terminal-error'}><span>[{lastResult.ok ? 'DONE' : 'ERROR'}]</span>{lastResult.message} · {formatDate(lastResult.finishedAt)}</div><pre>{lastResult.output || '操作完成，没有额外输出。'}</pre></>}</> : <div className="terminal-idle">[IDLE] 请选择启动、校验或备份操作。</div>}</div></div><footer><button className="secondary-button" onClick={() => void refresh()}><RefreshCw />刷新环境</button><button className="secondary-button" onClick={() => setActiveView('settings')}><Settings2 />终端设置</button></footer></aside></>}

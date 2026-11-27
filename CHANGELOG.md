@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added a dedicated read-only MOD Center backed by a fresh unified-catalog rebuild for the active Steam or frozen version.
+- Added search and evidence filters for active, inactive, problematic, binary-bearing, Workshop and local MODs.
+- Added per-MOD B42 layer resolution, dependency and reverse-dependency views, installed incompatibility evidence, file-kind counts and content digests.
+- Kept MOD Center IPC payloads bounded to summary evidence instead of transferring every scanned file to the renderer.
 - Added version-bound MOD profiles for saves and server configurations, including ordered Mod IDs, Workshop IDs and catalog evidence.
 - Added compare-before-write previews with missing-install, game-identity and context-format blockers plus explicit enable, disable and order differences.
 - Added digest-verified `.pzprofile` import/export with local save paths removed from exported files.

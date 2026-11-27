@@ -11,6 +11,7 @@ const api: VaultApi = {
   listCurrentMods: () => ipcRenderer.invoke('vault:list-current-mods'),
   analyzeIntegrity: () => ipcRenderer.invoke('vault:analyze-integrity'),
   analyzeCompatibility: () => ipcRenderer.invoke('vault:analyze-compatibility'),
+  loadModCenter: () => ipcRenderer.invoke('vault:load-mod-center'),
   listModProfiles: () => ipcRenderer.invoke('vault:list-mod-profiles'),
   createModProfile: (name: string, contextPath?: string) => ipcRenderer.invoke('vault:create-mod-profile', name, contextPath),
   compareModProfile: (profileId: string, contextPath?: string) => ipcRenderer.invoke('vault:compare-mod-profile', profileId, contextPath),
