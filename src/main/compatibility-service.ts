@@ -25,6 +25,7 @@ import { detectSteamInstallation } from './steam-service'
 import { collectLayerFiles, discoverLocalMods, discoverWorkshopMods, gameVersionKey, normalizeModId, type ResolvedMod } from './mod-resolver'
 import { analyzeTranslationSemantics } from './translation-analysis'
 import { getSnapshot } from './vault-service'
+import { analyzeVersionImpact } from './version-impact-analysis'
 
 type AnalysisSource = {
   source: 'Steam' | 'Frozen'
@@ -35,6 +36,7 @@ type AnalysisSource = {
   buildId: string
   identity: GameIdentity
   outputRoot: string
+  managerRoot: string | null
 }
 
 const severityRank: Record<CompatibilitySeverity, number> = { blocker: 0, warning: 1, unknown: 2, pass: 3 }
@@ -99,7 +101,8 @@ const resolveSource = async (): Promise<AnalysisSource> => {
           `游戏目录：${steam.gamePath}`
         ]
       },
-      outputRoot
+      outputRoot,
+      managerRoot: snapshot.managerRoot
     }
   }
 
@@ -114,7 +117,8 @@ const resolveSource = async (): Promise<AnalysisSource> => {
     workshopPath: null,
     buildId: config.BuildID ?? 'unknown',
     identity,
-    outputRoot: config.ReportPath || path.join(config.FreezeRoot, 'reports')
+    outputRoot: config.ReportPath || path.join(config.FreezeRoot, 'reports'),
+    managerRoot: snapshot.managerRoot ?? config.ManagerRoot ?? null
   }
 }
 
@@ -604,6 +608,41 @@ export const analyzeCompatibility = async (): Promise<CompatibilityReport> => {
   if (unsupportedClasses.length) issues.push(issue('java-class-version-unsupported', 'warning', 'security', `${unsupportedClasses.length} 个可能生效的 Class 高于游戏 Java 版本`, `游戏自带 Java ${modCatalog.javaRuntime!.version}（最高 Class ${modCatalog.javaRuntime!.classMajor}），这些条目使用了更高版本。`, unsupportedClasses.slice(0, 30).map(({ mod, archive, definition }) => `${mod.modId ?? mod.name} · ${archive.relativePath} · ${definition.entryPath} · Class ${definition.majorVersion}`), unique(unsupportedClasses.flatMap(({ mod }) => mod.modId ? [mod.modId] : [])), { confidence: 'confirmed', impact: '如果游戏加载这些类，JVM 会拒绝其 Class 版本；仅位于未生效多版本目录的类已排除。', action: '安装面向游戏内置 Java 版本编译的 MOD，或向作者确认兼容构建。', rule: 'JAVA-CLASS-VERSION' }))
   if (javaArchives.length && !javaArchives.some(({ archive }) => archive.completeness === 'partial')) issues.push(issue('java-archives-parsed', 'pass', 'security', 'JAR 内部静态证据已完整建立', `${javaArchives.length} 个 JAR 共解析 ${javaArchives.reduce((sum, entry) => sum + entry.archive.classes, 0)} 个 Class、${javaArchives.reduce((sum, entry) => sum + entry.archive.projectZomboidClasses.length, 0)} 个 PZ API 类引用。`, javaArchives.flatMap(({ mod, archive }) => [`${mod.modId ?? mod.name} · Class ${archive.classes} · Java major ${archive.minimumClassMajor ?? '?'}～${archive.maximumClassMajor ?? '?'}`]), [], { confidence: 'confirmed', rule: 'JAVA-ARCHIVE-STATIC-COVERAGE' }))
   if (files.binaryModIds.length) issues.push(issue('binary-mods', 'unknown', 'security', '检测到 Java 或本地二进制扩展', '已建立文件哈希和可读取 JAR 的内部静态证据，但静态分析仍不能证明代码来源可信或运行时兼容。', files.binaryModIds, files.binaryModIds, { confidence: 'unverified', impact: '它们可能随游戏 revision 变化而失效，也具备普通 Lua MOD 之外的系统权限风险。', action: '只使用可信来源、优先选择可复现或开源构建，并在每次游戏更新后核对实际启动日志。', rule: 'BINARY-MOD-MANUAL-TRUST' }))
+  const versionImpactPath = path.join(catalogBase, 'version-impact', `latest-${source.source.toLowerCase()}.json`)
+  const scriptKeysByMod = new Map<string, string[]>()
+  for (const [key, owners] of Object.entries(files.scriptDefinitions.owners)) for (const owner of owners) {
+    scriptKeysByMod.set(owner.modId, [...new Set([...(scriptKeysByMod.get(owner.modId) ?? []), key])])
+  }
+  const versionImpact = source.managerRoot ? await analyzeVersionImpact({
+    managerRoot: source.managerRoot,
+    currentGamePath: source.gamePath,
+    current: source.identity,
+    reportPath: versionImpactPath,
+    mods: scopedCatalogMods.map((mod) => ({
+      id: mod.modId ?? mod.name,
+      files: mod.content.files.map((file) => ({ relativePath: file.relativePath, sha256: file.sha256, kind: file.kind })),
+      scriptDefinitionKeys: scriptKeysByMod.get(mod.modId ?? mod.name) ?? [],
+      projectZomboidClasses: unique(mod.content.javaArchives.flatMap((archive) => archive.projectZomboidClasses))
+    }))
+  }) : null
+  if (!versionImpact) {
+    issues.push(issue('version-impact-no-baseline', 'unknown', 'version', '没有可用的旧版本基线', '管理目录中没有找到低于当前游戏版本且文件完整的冻结版，因此不能判断这次更新具体影响了哪些 MOD 接口。', source.managerRoot ? [path.join(source.managerRoot, 'frozen')] : [], [], { confidence: 'unverified', impact: '当前报告仍能检查本版本内的依赖和冲突，但缺少跨版本变化证据。', action: '保留一个更新前冻结版后重新分析；不要把缺少基线解释为兼容通过。', rule: 'VERSION-IMPACT-BASELINE' }))
+  } else {
+    const impacted = versionImpact.scriptDefinitions.affectedByMods
+    if (impacted.length) issues.push(issue('version-impact-script-definitions', 'warning', 'version', `${impacted.length} 个 MOD 脚本实体与本次原版改动相交`, `从 ${versionImpact.baseline.version} 到 ${versionImpact.current.version}，这些原版实体已更改或移除，同时当前 MOD 仍定义同一个实体键。`, impacted.slice(0, 20).flatMap((entry) => [`${entry.key} ← ${entry.mods.join('、')}`, `旧：${entry.baseline ?? '无'}`, `新：${entry.current ?? '已移除'}`]), unique(impacted.flatMap((entry) => entry.mods)), { confidence: 'confirmed', impact: 'MOD 可能仍以旧版字段、默认值或结构为基础，加载顺序也可能遮蔽新版原版修复。', action: '优先升级列出的 MOD；在复制存档中验证对应物品、配方、车辆或模型，并检查 console.txt。', rule: 'VERSION-IMPACT-SCRIPT-INTERSECTION' }))
+    else issues.push(issue('version-impact-script-pass', 'pass', 'version', '原版脚本变化没有命中当前 MOD 的同名实体', `两版共发现 ${versionImpact.summary.scriptDefinitionsChanged + versionImpact.summary.scriptDefinitionsRemoved} 个更改或移除的原版实体，未与当前分析范围 MOD 的实体键相交。`, [versionImpact.reportPath, `报告摘要：${versionImpact.reportDigest}`], [], { confidence: 'confirmed', rule: 'VERSION-IMPACT-SCRIPT-INTERSECTION' }))
+    const overrideChanges = [...versionImpact.overriddenBaseFiles.changed, ...versionImpact.overriddenBaseFiles.removed]
+    const exactOldCopies = overrideChanges.filter((entry) => entry.staleCopyMods?.length)
+    if (exactOldCopies.length) issues.push(issue('version-impact-base-overrides-stale-copy', 'warning', 'version', `${exactOldCopies.length} 个 MOD 文件是更新前原版文件的精确副本`, 'MOD 文件 SHA-256 与旧版原版完全相同，而新版原版已变化或移除；这是旧版整文件副本的直接证据。', exactOldCopies.slice(0, 24).map((entry) => `${entry.key} ← ${entry.staleCopyMods!.join('、')} · ${entry.baseline}`), unique(exactOldCopies.flatMap((entry) => entry.staleCopyMods ?? [])), { confidence: 'confirmed', impact: '加载该副本时可能重新带回旧版实现并遮蔽新版修复。', action: '优先升级列出的 MOD；不要手工合并代码，在复制存档中验证后再用于正式存档。', rule: 'VERSION-IMPACT-EXACT-OLD-BASE-COPY' }))
+    const unresolvedOverrides = overrideChanges.filter((entry) => !entry.staleCopyMods?.length)
+    if (unresolvedOverrides.length) issues.push(issue('version-impact-base-overrides-changed', 'unknown', 'version', `${unresolvedOverrides.length} 个 MOD 同路径原版文件在新版发生变化`, '路径和两版原版 SHA-256 已确认，但 MOD 内容不是旧版原文件的精确副本；翻译容器、Lua 加载和特殊索引可能是合并或有意修改，不能仅凭同路径判冲突。', unresolvedOverrides.slice(0, 24).map((entry) => `${entry.key} · ${entry.kinds?.join('/')} ← ${entry.mods.join('、')}`), unique(unresolvedOverrides.flatMap((entry) => entry.mods)), { confidence: 'confirmed', impact: '其中可能有需要适配的覆盖，也可能完全不受影响；现有静态证据不能统一判定。', action: '先查看具体路径和 MOD 当前版本说明；对 Lua/界面修改重点检查启动日志和复制存档，不要按数量批量删除 MOD。', rule: 'VERSION-IMPACT-BASE-PATH-CHANGED' }))
+    if (!overrideChanges.length) issues.push(issue('version-impact-overrides-pass', 'pass', 'version', 'MOD 同路径原版文件在两版间未发生变化', `核对了 ${versionImpact.summary.overriddenBaseFilesChecked} 个实际存在于至少一个原版中的 MOD 路径。`, [versionImpact.reportPath], [], { confidence: 'confirmed', rule: 'VERSION-IMPACT-BASE-FILE-HASH' }))
+    if (versionImpact.javaApi.removed.length) issues.push(issue('version-impact-java-removed', 'warning', 'version', `${versionImpact.javaApi.removed.length} 个 MOD 引用的游戏 Java 类已移除`, 'JAR 常量池中存在这些 zombie/* 类引用，但新版 projectzomboid.jar 已找不到同名 Class。', versionImpact.javaApi.removed.slice(0, 30).map((entry) => `${entry.key} ← ${entry.mods.join('、')}`), unique(versionImpact.javaApi.removed.flatMap((entry) => entry.mods)), { confidence: 'confirmed', impact: '如果运行路径加载这些引用，可能出现 ClassNotFound、NoClassDefFound 或链接错误。', action: '升级对应 Java MOD，并在启动日志中核对类加载错误；不要手动从旧版复制 Class。', rule: 'VERSION-IMPACT-JAVA-CLASS-REMOVED' }))
+    if (versionImpact.javaApi.changed.length) issues.push(issue('version-impact-java-changed', 'unknown', 'version', `${versionImpact.javaApi.changed.length} 个 MOD 引用的游戏 Java 类内容已变化`, '逐 Class SHA-256 已确认变化，但仅凭字节变化不能判断公开方法签名或运行行为是否破坏兼容。', versionImpact.javaApi.changed.slice(0, 30).map((entry) => `${entry.key} ← ${entry.mods.join('、')}`), unique(versionImpact.javaApi.changed.flatMap((entry) => entry.mods)), { confidence: 'confirmed', impact: '内部字段、方法或行为可能变化，也可能只是不会影响该 MOD 的实现调整。', action: '核对 MOD 的当前 Build 支持声明，并通过实际启动日志验证；本项不会被误写成确定冲突。', rule: 'VERSION-IMPACT-JAVA-CLASS-CHANGED' }))
+    if (versionImpact.javaApi.unresolved.length) issues.push(issue('version-impact-java-unresolved', 'unknown', 'version', `${versionImpact.javaApi.unresolved.length} 个 MOD 静态引用未在两版主游戏 JAR 中找到`, '这些 zombie/* 名称同时不在两版 projectzomboid.jar；它们可能来自其他运行时 JAR、动态生成或无效引用，不能当作两版内容一致。', versionImpact.javaApi.unresolved.slice(0, 30).map((entry) => `${entry.key} ← ${entry.mods.join('、')}`), unique(versionImpact.javaApi.unresolved.flatMap((entry) => entry.mods)), { confidence: 'confirmed', impact: '当前主 JAR 对比无法说明这些引用的跨版本状态。', action: '核对游戏其他 JAR 和启动日志；不要把本项解释为类已移除。', rule: 'VERSION-IMPACT-JAVA-CLASS-UNRESOLVED' }))
+    if (!versionImpact.javaApi.changed.length && !versionImpact.javaApi.removed.length && !versionImpact.javaApi.unresolved.length && versionImpact.summary.javaClassesChecked) issues.push(issue('version-impact-java-pass', 'pass', 'version', 'MOD 引用的游戏 Java 类在两版间内容一致', `逐类核对了 ${versionImpact.summary.javaClassesChecked} 个当前 JAR 静态引用。`, [versionImpact.reportPath], [], { confidence: 'confirmed', rule: 'VERSION-IMPACT-JAVA-CLASS-HASH' }))
+    if (versionImpact.completeness === 'partial') issues.push(issue('version-impact-partial', 'unknown', 'version', '版本更新影响报告存在未读取证据', '部分脚本、覆盖文件或 JAR 没有完成读取，因此未把未覆盖范围解释为通过。', [...versionImpact.scriptDefinitions.errors, ...versionImpact.overriddenBaseFiles.errors, ...versionImpact.javaApi.errors].slice(0, 30), [], { confidence: 'unverified', impact: '未完成部分可能仍包含跨版本影响。', action: '按证据修复不可读文件或损坏 JAR，再重新运行分析。', rule: 'VERSION-IMPACT-COVERAGE' }))
+  }
   const contentCoverageComplete = !selectedContext || (selectedContext.missingModIds.length === 0 && selectedContext.missingWorkshopIds.length === 0)
   if (!issues.some((entry) => entry.appliesToScope && entry.category === 'dependency' && entry.severity === 'blocker')) {
     issues.push(contentCoverageComplete
@@ -665,6 +704,22 @@ export const analyzeCompatibility = async (): Promise<CompatibilityReport> => {
       composableVariations: files.scriptDefinitions.composableVariations.length,
       identicalSharedDefinitions: files.scriptDefinitions.identicalSharedDefinitions
     },
+    versionImpact: versionImpact ? {
+      path: versionImpact.reportPath,
+      digest: versionImpact.reportDigest,
+      completeness: versionImpact.completeness,
+      baselineVersion: versionImpact.baseline.version,
+      baselineBuildId: versionImpact.baseline.buildId,
+      currentVersion: versionImpact.current.version,
+      currentBuildId: versionImpact.current.buildId,
+      scriptDefinitionsChanged: versionImpact.summary.scriptDefinitionsChanged + versionImpact.summary.scriptDefinitionsRemoved,
+      modScriptDefinitionsAffected: versionImpact.summary.modScriptDefinitionsAffected,
+      overriddenBaseFilesChanged: versionImpact.summary.overriddenBaseFilesChanged + versionImpact.summary.overriddenBaseFilesRemoved,
+      exactOldBaseCopies: versionImpact.summary.exactOldBaseCopies,
+      javaClassesChanged: versionImpact.summary.javaClassesChanged,
+      javaClassesRemoved: versionImpact.summary.javaClassesRemoved,
+      javaClassesUnresolved: versionImpact.summary.javaClassesUnresolved
+    } : undefined,
     identity: source.identity,
     verdict,
     methodology: [
@@ -675,14 +730,16 @@ export const analyzeCompatibility = async (): Promise<CompatibilityReport> => {
       '只对当前分析范围内的 MOD 建立依赖图和加载顺序。',
       '对同路径文件计算 SHA-256；内容完全相同的重叠不会作为风险报告。',
       'Lua 只做受限静态分词，提取 require、事件挂接、全局写入、直接注册键和带 type 的表注册；不执行脚本。',
-      'Project Zomboid 脚本按 module 与完整定义头建立跨路径全局索引，并比较去除注释和排版后的定义内容与直接子块数量。'
+      'Project Zomboid 脚本按 module 与完整定义头建立跨路径全局索引，并比较去除注释和排版后的定义内容与直接子块数量。',
+      '选择最近的旧冻结版作为更新基线，比较原版脚本实体、MOD 同路径原版文件和 MOD 实际引用的游戏 Java Class。'
     ],
     limitations: [
       selectedContext ? `本报告的主要结论只适用于“${scopeLabel}”。` : '没有唯一启用上下文，因此依赖和覆盖分析只能描述已安装内容，不能代表某个实际存档或服务器。',
       ...(selectedContext?.missingModIds.length ? [`${selectedContext.missingModIds.length} 个缺失 Mod ID 没有文件可供解析；它们的依赖、互斥、tiledef 和文件覆盖不在已完成扫描内。`] : []),
       '静态分析不会执行 Lua、Java 或本地二进制代码；反射、动态类生成、类加载器先后和 Mixin 实际应用仍需运行日志验证。',
       '多个 MOD 的 Lua 相对路径相同不等于互相覆盖；只有静态证据确认同名写入或注册差异时才提升为警告。',
-      '全局脚本索引只覆盖当前分析范围内实际生效且能完整解析的文件；未解析文件会单独列为待验证。'
+      '全局脚本索引只覆盖当前分析范围内实际生效且能完整解析的文件；未解析文件会单独列为待验证。',
+      '跨版本 Class 或同路径文件内容变化不会自动解释为不兼容；只有类移除、脚本实体交集和精确旧版原文件副本会提升为警告。'
     ],
     summary: {
       installedMods: mods.length,

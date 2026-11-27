@@ -379,6 +379,9 @@ const CompatibilityResults = ({ report }: { report: CompatibilityReport }): Reac
     {report.scriptDefinitions && <div className={`identity-evidence catalog-evidence ${report.scriptDefinitions.partialFiles ? 'partial' : 'complete'}`}>
       <FileCode2 /><div><b>全局 PZ 脚本实体索引 · {report.scriptDefinitions.partialFiles ? '覆盖不完整' : '覆盖完整'}</b><span>{report.scriptDefinitions.definitions} 个定义 · 覆盖差异 {report.scriptDefinitions.crossPathConflicts} · 扩展组合 {report.scriptDefinitions.composableVariations} · 未解析 {report.scriptDefinitions.partialFiles}</span><code>{report.scriptDefinitions.digest}</code><small>{report.scriptDefinitions.path}</small></div>
     </div>}
+    {report.versionImpact && <div className={`identity-evidence catalog-evidence ${report.versionImpact.completeness}`}>
+      <GitBranch /><div><b>游戏更新影响基线 · {report.versionImpact.baselineVersion} → {report.versionImpact.currentVersion}</b><span>MOD 实体交集 {report.versionImpact.modScriptDefinitionsAffected} · 同路径原版变化 {report.versionImpact.overriddenBaseFilesChanged}（旧版精确副本 {report.versionImpact.exactOldBaseCopies}）· Java 类变化 {report.versionImpact.javaClassesChanged} / 移除 {report.versionImpact.javaClassesRemoved} / 未定位 {report.versionImpact.javaClassesUnresolved}</span><code>{report.versionImpact.digest}</code><small>{report.versionImpact.path}</small></div>
+    </div>}
     <div className="compatibility-columns">
       <div className="compatibility-issues">
         <div className="report-section-title"><h3>规则结果</h3><span>{report.issues.filter((entry) => entry.appliesToScope).length} 项影响当前范围 · {report.issues.length} 项已列出</span></div>

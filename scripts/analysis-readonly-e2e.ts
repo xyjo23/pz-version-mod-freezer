@@ -28,6 +28,13 @@ const main = async (): Promise<void> => {
   if (!compatibility.summary.installedMods) throw new Error('No installed MOD was resolved from the real Workshop/cache data.')
   if (!compatibility.reportPath || !path.resolve(compatibility.reportPath).startsWith(path.resolve(testRoot))) throw new Error('Compatibility report escaped the isolated test root.')
   if (!existsSync(compatibility.reportPath)) throw new Error('Compatibility report was not persisted.')
+  if (process.env.PZ_ANALYSIS_EXPECT_VERSION_BASELINE === '1') {
+    if (!compatibility.versionImpact) throw new Error('Version-impact baseline was not attached to the compatibility report.')
+    if (compatibility.versionImpact.completeness !== 'complete') throw new Error('Version-impact evidence was not complete.')
+    if (!path.resolve(compatibility.versionImpact.path).startsWith(path.resolve(testRoot)) || !existsSync(compatibility.versionImpact.path)) throw new Error('Version-impact report escaped the isolated test root or was not persisted.')
+    const impact = JSON.parse(await fs.readFile(compatibility.versionImpact.path, 'utf8')) as { reportDigest?: string }
+    if (impact.reportDigest !== compatibility.versionImpact.digest) throw new Error('Version-impact digest does not match its persisted report.')
+  }
 
   console.log(`ANALYSIS_E2E=${JSON.stringify({
     identity: compatibility.identity,
@@ -41,7 +48,8 @@ const main = async (): Promise<void> => {
     overlaps: compatibility.summary.overlapPaths,
     scope: compatibility.scopeLabel,
     integrityReport: integrity.reportPath,
-    compatibilityReport: compatibility.reportPath
+    compatibilityReport: compatibility.reportPath,
+    versionImpact: compatibility.versionImpact ?? null
   })}`)
 }
 

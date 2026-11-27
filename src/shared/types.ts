@@ -747,6 +747,22 @@ export type CompatibilityReport = {
     composableVariations: number
     identicalSharedDefinitions: number
   }
+  versionImpact?: {
+    path: string
+    digest: string
+    completeness: 'complete' | 'partial'
+    baselineVersion: string
+    baselineBuildId: string
+    currentVersion: string
+    currentBuildId: string
+    scriptDefinitionsChanged: number
+    modScriptDefinitionsAffected: number
+    overriddenBaseFilesChanged: number
+    exactOldBaseCopies: number
+    javaClassesChanged: number
+    javaClassesRemoved: number
+    javaClassesUnresolved: number
+  }
   identity: GameIdentity
   verdict: CompatibilitySeverity
   methodology: string[]
