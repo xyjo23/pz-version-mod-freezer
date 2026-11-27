@@ -21,6 +21,7 @@
     "test:scripts": "tsx --test src/main/script-analysis.test.ts",
     "test:version-impact": "tsx --test src/main/version-impact-analysis.test.ts",
     "test:radar": "node --experimental-strip-types --test src/renderer/src/radar-layout.test.ts",
+    "test:ui:visual": "electron scripts/ui-visual-smoke.mjs",
     "test:safety": "tsx --test src/main/safe-write.test.ts",
     "test:qa": "pnpm test:safety && pnpm test:share && pnpm test:launch && pnpm test:mods && pnpm test:mod-center && pnpm test:profiles && pnpm test:migration && pnpm test:translation && pnpm test:lua && pnpm test:scripts && pnpm test:version-impact && pnpm test:radar && pnpm typecheck",
     "test:analysis:real": "set NODE_OPTIONS=--import tsx&& electron scripts/analysis-readonly-e2e.ts",

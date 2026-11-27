@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added a workspace-aware visual system with distinct accent colors, ambient depth, page transitions and clearer interactive states across all primary views.
+- Added a searchable `Ctrl+K` quick-navigation palette with keyboard focus containment and safe, navigation-only commands.
+- Added a persistent motion preference that preserves status feedback while disabling non-essential movement and respects the operating system reduced-motion setting.
+- Added automated 1440×900 visual smoke captures for the six primary workspaces and the command palette.
+
 ## 0.9.0-preview - 2026-11-27
 
 - Added evidence-bounded Lua analysis for `require`, event subscriptions, global writes and keyed registrations without executing MOD code.

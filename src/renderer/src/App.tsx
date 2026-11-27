@@ -709,10 +709,15 @@ export const App = (): React.JSX.Element => {
   const previewMode = import.meta.env.DEV ? new URLSearchParams(window.location.search) : null
   const previewView = previewMode?.get('view')
   const [activeView, setActiveView] = useState<AppView>(['mods', 'versions', 'maintenance', 'help', 'settings'].includes(previewView ?? '') ? previewView as AppView : 'console')
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
+  const [commandQuery, setCommandQuery] = useState('')
+  const [motionEnabled, setMotionEnabled] = useState(() => window.localStorage.getItem('pz-vault-motion-enabled') !== 'false')
   const previewHelpTopic = previewMode?.get('helpTopic') as HelpTopicId | null
   const [activeHelpTopic, setActiveHelpTopic] = useState<HelpTopicId | null>(() => helpTutorials.some((topic) => topic.id === previewHelpTopic) ? previewHelpTopic : null)
   const helpScrollRef = useRef<HTMLDivElement>(null)
   const helpDialogRef = useRef<HTMLElement>(null)
+  const commandDialogRef = useRef<HTMLElement>(null)
+  const mainContentRef = useRef<HTMLElement>(null)
   const detailDrawerRef = useRef<HTMLElement>(null)
   const modsDrawerRef = useRef<HTMLElement>(null)
   const onboardingDialogRef = useRef<HTMLElement>(null)
@@ -745,7 +750,7 @@ export const App = (): React.JSX.Element => {
   const [saveProtection, setSaveProtection] = useState(() => window.localStorage.getItem('pz-vault-save-protection') === 'true')
   const [showSaveOnboarding, setShowSaveOnboarding] = useState(() => previewMode?.get('onboarding') === 'open' || (!import.meta.env.DEV && window.localStorage.getItem('pz-vault-save-onboarding-seen') !== 'true'))
   const isHelpOpen = Boolean(activeHelpTopic)
-  const hasBlockingModal = showSaveOnboarding || isHelpOpen || isModsDrawerOpen || isDrawerOpen
+  const hasBlockingModal = showSaveOnboarding || isHelpOpen || isModsDrawerOpen || isDrawerOpen || commandPaletteOpen
 
   const refresh = useCallback(async () => {
     const [nextSnapshot, nextVersions, nextSteam] = await Promise.all([window.vault.getSnapshot(), window.vault.listVersions(), window.vault.detectSteam()])
@@ -764,6 +769,9 @@ export const App = (): React.JSX.Element => {
     if (activeHelpTopic) helpScrollRef.current?.scrollTo({ top: 0, behavior: 'auto' })
   }, [activeHelpTopic])
   useEffect(() => {
+    mainContentRef.current?.scrollTo({ top: 0, behavior: motionEnabled ? 'smooth' : 'auto' })
+  }, [activeView])
+  useEffect(() => {
     const modal = showSaveOnboarding
       ? onboardingDialogRef.current
       : isHelpOpen
@@ -772,10 +780,12 @@ export const App = (): React.JSX.Element => {
           ? modsDrawerRef.current
           : isDrawerOpen
             ? detailDrawerRef.current
+            : commandPaletteOpen
+              ? commandDialogRef.current
             : null
     if (!modal) return
     const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const focusFrame = window.requestAnimationFrame(() => modal.focus({ preventScroll: true }))
+    const focusFrame = window.requestAnimationFrame(() => (modal.querySelector<HTMLElement>('[data-autofocus]') ?? modal).focus({ preventScroll: true }))
     const trapFocus = (event: KeyboardEvent): void => {
       if (event.key !== 'Tab') return
       const focusable = [...modal.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
@@ -801,9 +811,21 @@ export const App = (): React.JSX.Element => {
       modal.removeEventListener('keydown', trapFocus)
       returnFocus?.focus({ preventScroll: true })
     }
-  }, [showSaveOnboarding, isHelpOpen, isModsDrawerOpen, isDrawerOpen])
+  }, [showSaveOnboarding, isHelpOpen, isModsDrawerOpen, isDrawerOpen, commandPaletteOpen])
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent): void => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        if (document.querySelector('.command-palette')) {
+          setCommandPaletteOpen(false)
+          setCommandQuery('')
+          return
+        }
+        if (document.querySelector('[aria-modal="true"]')) return
+        setCommandPaletteOpen(true)
+        setCommandQuery('')
+        return
+      }
       if (event.key === 'Escape') {
         setDrawerOpen(false)
         setDetailSelection(null)
@@ -812,6 +834,8 @@ export const App = (): React.JSX.Element => {
         setTerminalPinned(false)
         setActiveHelpTopic(null)
         setShowAnalysisResponsibilities(false)
+        setCommandPaletteOpen(false)
+        setCommandQuery('')
       }
     }
     window.addEventListener('keydown', closeOnEscape)
@@ -1119,13 +1143,45 @@ export const App = (): React.JSX.Element => {
   </section> : null
   const selectedHelpTutorial = helpTutorials.find((topic) => topic.id === activeHelpTopic) ?? null
   const selectedHelpIndex = selectedHelpTutorial ? helpTutorials.findIndex((topic) => topic.id === selectedHelpTutorial.id) : -1
+  const viewMeta: Record<AppView, { label: string; context: string }> = {
+    console: { label: '控制台', context: 'CURRENT ENVIRONMENT' },
+    mods: { label: 'MOD 中心', context: 'EVIDENCE DATABASE' },
+    versions: { label: '版本集合', context: 'VERSION REGISTRY' },
+    maintenance: { label: '维护工具', context: 'VAULT OPERATIONS' },
+    help: { label: '帮助中心', context: 'SURVIVOR GUIDE' },
+    settings: { label: '设置', context: 'PREFERENCES' }
+  }
+  const navigationCommands = [
+    { view: 'console' as const, label: '控制台', detail: '当前版本、启动与环境状态', icon: LayoutDashboard },
+    { view: 'mods' as const, label: 'MOD 中心', detail: '浏览证据、依赖与启用清单', icon: Database },
+    { view: 'versions' as const, label: '版本集合', detail: '切换、导入与检查登记版本', icon: Boxes },
+    { view: 'maintenance' as const, label: '维护工具', detail: '迁移、完整性、兼容性与共享包', icon: Wrench },
+    { view: 'help' as const, label: '帮助中心', detail: '查看完整操作教程', icon: BookOpen },
+    { view: 'settings' as const, label: '设置', detail: '界面、存档保护与日志', icon: Settings2 }
+  ]
+  const normalizedCommandQuery = commandQuery.trim().toLocaleLowerCase('zh-CN')
+  const filteredCommands = normalizedCommandQuery
+    ? navigationCommands.filter((command) => `${command.label} ${command.detail} ${command.view}`.toLocaleLowerCase('zh-CN').includes(normalizedCommandQuery))
+    : navigationCommands
+  const navigateTo = (view: AppView): void => {
+    setActiveView(view)
+    setCommandPaletteOpen(false)
+    setCommandQuery('')
+  }
+  const updateMotion = (enabled: boolean): void => {
+    setMotionEnabled(enabled)
+    window.localStorage.setItem('pz-vault-motion-enabled', String(enabled))
+  }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${motionEnabled ? 'motion-enabled' : 'motion-reduced'}`} data-view={activeView}>
+      <div className="ambient-canvas" aria-hidden="true"><span className="ambient-grid" /><span className="ambient-orb orb-one" /><span className="ambient-orb orb-two" /><span className="ambient-scan" /></div>
       <header className="titlebar" inert={hasBlockingModal}>
         <div className="brand-mark"><VaultMark /></div>
         <div className="brand-copy"><strong>ZOMBOID VAULT</strong><span>ISOLATED BUILD MANAGER</span></div>
         <div className="titlebar-spacer" />
+        <div className="titlebar-context" aria-live="polite"><span className="context-signal" /><div><small>{viewMeta[activeView].context}</small><b>{viewMeta[activeView].label}</b></div></div>
+        <button className="command-trigger" onClick={() => { setCommandPaletteOpen(true); setCommandQuery('') }} aria-label="打开快速导航"><Search /><span>快速导航</span><kbd>Ctrl K</kbd></button>
         <button className="window-button" onClick={() => void window.vault.minimizeWindow()} aria-label="最小化"><Minus /></button>
         <button className="window-button" onClick={() => void window.vault.toggleMaximizeWindow()} aria-label="最大化"><Maximize2 /></button>
         <button className="window-button close" onClick={() => void window.vault.closeWindow()} aria-label="关闭"><X /></button>
@@ -1135,23 +1191,24 @@ export const App = (): React.JSX.Element => {
         <aside className="sidebar">
           <div className="nav-section-label">工作区</div>
           <nav>
-            <button className={`nav-item ${activeView === 'console' ? 'active' : ''}`} onClick={() => setActiveView('console')}><LayoutDashboard /><span>控制台</span></button>
-            <button className={`nav-item ${activeView === 'mods' ? 'active' : ''}`} onClick={() => setActiveView('mods')}><Database /><span>MOD 中心</span></button>
-            <button className={`nav-item ${activeView === 'versions' ? 'active' : ''}`} onClick={() => setActiveView('versions')}><Boxes /><span>版本管理</span></button>
-            <button className={`nav-item ${activeView === 'maintenance' ? 'active' : ''}`} onClick={() => setActiveView('maintenance')}><Wrench /><span>维护工具</span></button>
+            <button className={`nav-item ${activeView === 'console' ? 'active' : ''}`} aria-current={activeView === 'console' ? 'page' : undefined} onClick={() => navigateTo('console')}><LayoutDashboard /><span>控制台</span><i /></button>
+            <button className={`nav-item ${activeView === 'mods' ? 'active' : ''}`} aria-current={activeView === 'mods' ? 'page' : undefined} onClick={() => navigateTo('mods')}><Database /><span>MOD 中心</span><i /></button>
+            <button className={`nav-item ${activeView === 'versions' ? 'active' : ''}`} aria-current={activeView === 'versions' ? 'page' : undefined} onClick={() => navigateTo('versions')}><Boxes /><span>版本管理</span><i /></button>
+            <button className={`nav-item ${activeView === 'maintenance' ? 'active' : ''}`} aria-current={activeView === 'maintenance' ? 'page' : undefined} onClick={() => navigateTo('maintenance')}><Wrench /><span>维护工具</span><i /></button>
           </nav>
           <div className="nav-section-label utility-label">快捷入口</div>
           <nav>
-            <button className={`nav-item ${activeView === 'help' ? 'active' : ''}`} onClick={() => setActiveView('help')}><BookOpen /><span>帮助</span></button>
+            <button className={`nav-item ${activeView === 'help' ? 'active' : ''}`} aria-current={activeView === 'help' ? 'page' : undefined} onClick={() => navigateTo('help')}><BookOpen /><span>帮助</span><i /></button>
             <button className="nav-item" onClick={openEnvironment}><FolderCog /><span>版本详情</span></button>
           </nav>
           <div className="sidebar-foot">
             <div className="engine-chip"><span className="pulse-dot" /><div><b>ENGINE ONLINE</b><span>{snapshot?.enginePath ? 'PowerShell + Native' : 'Native Vault Core'}</span></div></div>
-            <button className={`icon-button ${activeView === 'settings' ? 'active' : ''}`} aria-label="设置" onClick={() => setActiveView('settings')}><Settings2 /></button>
+            <button className={`icon-button ${activeView === 'settings' ? 'active' : ''}`} aria-label="设置" onClick={() => navigateTo('settings')}><Settings2 /></button>
           </div>
         </aside>
 
-        <main className="main-content">
+        <main className="main-content" ref={mainContentRef}>
+          <div className="view-stage" key={activeView}>
           {activeView === 'console' ? (
             <>
               <section className="page-heading enter"><div><span className="eyebrow">PROJECT ZOMBOID / BUILD VAULT</span><h1>幸存者控制台</h1><p>查看当前隔离环境，并从这里开始游戏。</p></div>{environmentButton}</section>
@@ -1241,11 +1298,13 @@ export const App = (): React.JSX.Element => {
             <>
               <section className="page-heading enter"><div><span className="eyebrow">LAUNCHER PREFERENCES</span><h1>设置</h1><p>调整控制台显示内容和启动器使用偏好。</p></div></section>
               <section className="settings-panel enter delay-1"><div className="settings-heading"><div className="settings-icon"><SlidersHorizontal /></div><div><h2>界面模块</h2><p>选择启动器中需要显示的附加信息。</p></div></div><button className={`setting-row ${showVersionRadar ? 'enabled' : ''}`} role="switch" aria-checked={showVersionRadar} onClick={toggleVersionRadar}><div><b>版本管理使用雷达</b><span>开启时显示相对版本雷达；关闭后改用单列版本清单。</span></div><span className="toggle" aria-hidden="true"><i /></span></button><button className={`setting-row ${showTerminal ? 'enabled' : ''}`} role="switch" aria-checked={showTerminal} onClick={toggleTerminal}><div><b>启用“终端”抽屉</b><span>开启后，左侧会出现二级悬浮入口；悬停预览，点击可固定终端。</span></div><span className="toggle" aria-hidden="true"><i /></span></button></section>
+              <section className="settings-panel enter delay-1"><div className="settings-heading"><div className="settings-icon neutral"><Zap /></div><div><h2>动态体验</h2><p>控制页面转场、环境光效和交互反馈。</p></div></div><button className={`setting-row ${motionEnabled ? 'enabled' : ''}`} role="switch" aria-checked={motionEnabled} onClick={() => updateMotion(!motionEnabled)}><div><b>启用界面动态效果</b><span>关闭后保留所有功能和状态反馈，只移除非必要动画；系统“减少动态效果”设置始终优先。</span></div><span className="toggle" aria-hidden="true"><i /></span></button></section>
               <section className="settings-panel enter delay-2"><div className="settings-heading"><div className="settings-icon amber"><Archive /></div><div><h2>存档保护</h2><p>控制版本迁移前是否额外保存可恢复的安全快照。</p></div></div><button className={`setting-row ${saveProtection ? 'enabled' : ''}`} role="switch" aria-checked={saveProtection} onClick={() => updateSaveProtection(!saveProtection)}><div><b>迁移前创建存档安全快照</b><span>开启后，在复制或复用开始前备份 Saves、数据库与根配置。无论是否开启，可变数据都不会参与硬链接或共享。</span></div><span className="toggle" aria-hidden="true"><i /></span></button><div className="retention-note"><ShieldAlert /><span><b>不会在第三次启动后自动删除</b><small>“启动三次即删除”无法证明三次游戏均正常退出。当前版本保留快照，后续加入明确确认后再清理。</small></span></div></section>
               <section className="settings-panel compact enter delay-3"><div className="settings-heading"><div className="settings-icon"><ScrollText /></div><div><h2>操作日志</h2><p>查看创建、校验、启动和备份的历史日志文件。</p></div></div><button className="secondary-button" onClick={() => void window.vault.openLogs()}><FolderOpen />打开日志目录</button></section>
               <section className="settings-panel compact enter delay-3"><div className="settings-heading"><div className="settings-icon neutral"><ShieldCheck /></div><div><h2>版本管理目录</h2><p>当前目录：{snapshot?.managerRoot ?? '尚未配置'}</p></div></div><button className="secondary-button" onClick={() => void chooseRoot()}><FolderCog />重新选择管理器目录</button></section>
             </>
           )}
+          </div>
         </main>
       </div>
 
@@ -1254,7 +1313,7 @@ export const App = (): React.JSX.Element => {
           <aside className="help-modal-nav">
             <div className="help-modal-brand"><BookOpen /><div><span>使用教程</span><b>生存者手册</b></div></div>
             <nav aria-label="教程主题">{helpTutorials.map((topic) => <button className={topic.id === selectedHelpTutorial.id ? 'active' : ''} key={topic.id} onClick={() => setActiveHelpTopic(topic.id)}><span>{topic.number}</span><div><b>{topic.title}</b><small>{topic.eyebrow}</small></div><ChevronRight /></button>)}</nav>
-            <div className="help-modal-version"><span>当前教程版本</span><b>v0.8 · B42</b></div>
+            <div className="help-modal-version"><span>当前教程版本</span><b>v0.9 · B42</b></div>
           </aside>
           <div className="help-modal-main">
             <header className="help-modal-header"><div><span className="eyebrow">{selectedHelpTutorial.eyebrow}</span><h2 id="help-tutorial-title">{selectedHelpTutorial.title}</h2><p>{selectedHelpTutorial.summary}</p></div><button className="icon-button" onClick={() => setActiveHelpTopic(null)} aria-label="关闭教程"><X /></button></header>
@@ -1266,6 +1325,14 @@ export const App = (): React.JSX.Element => {
             </div>
             <footer className="help-modal-footer"><span>{selectedHelpIndex + 1} / {helpTutorials.length}</span><div><button className="secondary-button" disabled={selectedHelpIndex <= 0} onClick={() => setActiveHelpTopic(helpTutorials[selectedHelpIndex - 1]?.id ?? null)}>上一主题</button>{selectedHelpIndex < helpTutorials.length - 1 ? <button className="primary-button" onClick={() => setActiveHelpTopic(helpTutorials[selectedHelpIndex + 1]?.id ?? null)}>下一主题<ArrowRight /></button> : <button className="primary-button" onClick={() => setActiveHelpTopic(null)}><CheckCircle2 />完成阅读</button>}</div></footer>
           </div>
+        </section>
+      </div>}
+
+      {commandPaletteOpen && <div className="command-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) { setCommandPaletteOpen(false); setCommandQuery('') } }}>
+        <section className="command-palette" ref={commandDialogRef} role="dialog" aria-modal="true" aria-label="快速导航" tabIndex={-1}>
+          <header><Search /><input data-autofocus value={commandQuery} onChange={(event) => setCommandQuery(event.target.value)} placeholder="搜索页面或功能…" aria-label="搜索页面或功能" /><kbd>ESC</kbd></header>
+          <div className="command-results"><span className="command-group-label">导航到</span>{filteredCommands.length ? filteredCommands.map((command) => { const Icon = command.icon; return <button key={command.view} className={activeView === command.view ? 'current' : ''} onClick={() => navigateTo(command.view)}><span className="command-icon"><Icon /></span><span><b>{command.label}</b><small>{command.detail}</small></span>{activeView === command.view ? <i>当前</i> : <ArrowRight />}</button> }) : <div className="command-empty"><Search /><b>没有匹配的功能</b><span>试试“版本”“MOD”或“维护”。</span></div>}</div>
+          <footer><span><kbd>Ctrl</kbd><kbd>K</kbd> 随时打开</span><small>所有导航都不会自动执行文件操作</small></footer>
         </section>
       </div>}
 
