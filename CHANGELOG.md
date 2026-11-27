@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.9.0-preview - 2026-11-27
+
+- Added evidence-bounded Lua analysis for `require`, event subscriptions, global writes and keyed registrations without executing MOD code.
+- Added Project Zomboid script parsing by `module + complete definition header`, including a cross-path global entity index, identical-definition recognition and composable model/XUI evidence.
+- Added an automatic previous-version baseline that compares base-game script definitions, MOD same-path targets and the exact game Java classes referenced by active MOD JARs.
+- Kept version-update differences evidence-safe: exact old-base copies and removed referenced classes can warn, while byte changes without breaking evidence remain `待验证`.
+- Added complete/partial coverage, persisted SHA-256 report identities and plain-language update-impact cards to Compatibility Analysis.
+
 - Added bounded, non-executing JAR analysis for Class definitions, SHA-256 identities, Java class versions, Project Zomboid API references, native methods and Mixin static traces.
 - Added game-bundled Java runtime detection and effective multi-release JAR version checks without treating inactive versioned entries as runtime failures.
 - Added cross-MOD Java class ownership comparison that separates identical bundled classes from same-name classes with different bytecode.
