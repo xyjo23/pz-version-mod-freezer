@@ -153,7 +153,7 @@ const helpTutorials: HelpTutorial[] = [
       { title: '处理报告', intro: '按严重程度从上到下处理，并保留报告中的路径与 ID 证据。', steps: [
         { title: '阻断', detail: '优先修复缺失依赖、循环依赖、重复 Mod ID、明确互斥和不满足的版本条件。' },
         { title: '警告与待验证', detail: '检查加载顺序、存档或服务器清单差异，以及无法仅靠静态文件确认的脚本行为。' },
-        { title: '文件重叠', detail: '配置叠加、资源覆盖和代码覆盖含义不同；代码或地图覆盖需要重点核查加载顺序。' }
+        { title: '文件重叠', detail: '配置叠加、资源覆盖和代码同路径含义不同。Lua 会进一步只读解析 require、事件挂接、全局写入与注册键；相同文件名本身不会被直接判成冲突。' }
       ] }
     ],
     result: 'MOD 中心中的缺失依赖、重复 ID 等明确问题已处理，兼容性报告阻断项归零，并确认所有警告理由后，再复制存档进行实际进服或开档验证。',
@@ -382,8 +382,8 @@ const CompatibilityResults = ({ report }: { report: CompatibilityReport }): Reac
         {report.issues.map((entry) => <FindingCard entry={entry} key={entry.id} />)}
       </div>
       <div className="overlap-evidence">
-        <div className="report-section-title"><h3>文件覆盖证据</h3><span>显示 {report.overlaps.length}/{report.summary.overlapPaths}</span></div>
-        {report.overlaps.length ? report.overlaps.slice(0, 40).map((overlap) => <article key={`${overlap.classification}:${overlap.relativePath}`}><div><span className={`overlap-kind ${overlap.severity}`}>{overlapLabels[overlap.classification]}</span>{overlap.contentIdentical === true && <span className="identical-overlap">内容相同</span>}{overlap.semanticStatus === 'keys-disjoint' && <span className="identical-overlap">翻译键不冲突</span>}{overlap.semanticStatus === 'keys-conflict' && <span className="base-override">同键不同值</span>}{overlap.semanticStatus === 'unparsed' && <span className="hash-unavailable">键值未解析</span>}{overlap.contentIdentical === null && <span className="hash-unavailable">哈希未完成</span>}{overlap.overridesBaseGame && <span className="base-override">覆盖原版</span>}</div><code>{overlap.relativePath}</code><small>{overlap.modIds.join(' · ')}</small></article>) : <div className="report-empty"><CheckCircle2 />没有需要展示的同路径覆盖</div>}
+        <div className="report-section-title"><h3>同路径与语义证据</h3><span>显示 {report.overlaps.length}/{report.summary.overlapPaths}</span></div>
+        {report.overlaps.length ? report.overlaps.slice(0, 40).map((overlap) => <article key={`${overlap.classification}:${overlap.relativePath}`}><div><span className={`overlap-kind ${overlap.severity}`}>{overlapLabels[overlap.classification]}</span>{overlap.contentIdentical === true && <span className="identical-overlap">内容相同</span>}{overlap.semanticStatus === 'keys-disjoint' && <span className="identical-overlap">翻译键不冲突</span>}{overlap.semanticStatus === 'keys-conflict' && <span className="base-override">同键不同值</span>}{overlap.semanticStatus === 'unparsed' && <span className="hash-unavailable">键值未解析</span>}{overlap.semanticStatus === 'lua-symbol-conflict' && <span className="base-override">Lua 同名写入</span>}{overlap.semanticStatus === 'lua-registration-repeat' && <span className="hash-unavailable">Lua 重复注册</span>}{overlap.semanticStatus === 'lua-static-disjoint' && <span className="identical-overlap">未见静态同名写入</span>}{overlap.semanticStatus === 'lua-unparsed' && <span className="hash-unavailable">Lua 未完整解析</span>}{overlap.contentIdentical === null && <span className="hash-unavailable">哈希未完成</span>}{overlap.overridesBaseGame && <span className="base-override">覆盖原版</span>}</div><code>{overlap.relativePath}</code><small>{overlap.modIds.join(' · ')}</small></article>) : <div className="report-empty"><CheckCircle2 />没有需要展示的同路径证据</div>}
       </div>
     </div>
     <ReportMethod methodology={report.methodology} limitations={report.limitations} />
