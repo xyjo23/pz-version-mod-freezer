@@ -736,6 +736,17 @@ export type CompatibilityReport = {
     duplicateJavaClasses: number
     javaRuntime: JavaRuntimeEvidence | null
   }
+  scriptDefinitions?: {
+    path: string
+    digest: string
+    files: number
+    parsedFiles: number
+    partialFiles: number
+    definitions: number
+    crossPathConflicts: number
+    composableVariations: number
+    identicalSharedDefinitions: number
+  }
   identity: GameIdentity
   verdict: CompatibilitySeverity
   methodology: string[]

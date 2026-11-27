@@ -73,6 +73,7 @@ const main = async (): Promise<void> => {
   const overlapFilesOne = {
     [path.join('media', 'lua', 'shared', 'collision.lua')]: 'return "one"',
     [path.join('media', 'scripts', 'items.txt')]: 'module Base { item Shared { Type = One, } }',
+    [path.join('media', 'scripts', 'cross-one.txt')]: 'module Base { item CrossPath { Weight = 1.0, } }',
     [path.join('media', 'lua', 'shared', 'Translate', 'EN', 'shared.txt')]: 'Shared = Same',
     [path.join('media', 'lua', 'shared', 'Translate', 'EN', 'different.txt')]: 'Label = One',
     [path.join('media', 'lua', 'shared', 'Translate', 'EN', 'disjoint.json')]: '{"OnlyOne":"One"}',
@@ -81,6 +82,7 @@ const main = async (): Promise<void> => {
   const overlapFilesTwo = {
     [path.join('media', 'lua', 'shared', 'collision.lua')]: 'return "two"',
     [path.join('media', 'scripts', 'items.txt')]: 'module Base { item Shared { Type = Two, } }',
+    [path.join('media', 'scripts', 'cross-two.txt')]: 'module Base { item CrossPath { Weight = 2.0, } }',
     [path.join('media', 'lua', 'shared', 'Translate', 'EN', 'shared.txt')]: 'Shared = Same',
     [path.join('media', 'lua', 'shared', 'Translate', 'EN', 'different.txt')]: 'Label = Two',
     [path.join('media', 'lua', 'shared', 'Translate', 'EN', 'disjoint.json')]: '{"OnlyTwo":"Two"}',
@@ -198,6 +200,8 @@ const main = async (): Promise<void> => {
   requireRule('TILEDEF-NUMBER-UNIQUE', 'blocker')
   requireRule('FILE-OVERLAP-LUA', 'unknown')
   requireRule('FILE-OVERLAP-SCRIPTS', 'warning')
+  requireRule('PZ-SCRIPT-DEFINITION-UNIQUE-CROSS-PATH', 'warning')
+  requireRule('PZ-SCRIPT-INDEX-COVERAGE', 'pass')
   requireRule('FILE-OVERLAP-TRANSLATION', 'warning')
   requireRule('FILE-OVERLAP-TRANSLATION', 'unknown')
   requireRule('FILE-OVERLAP-HASH-EQUALITY', 'pass')
@@ -209,6 +213,8 @@ const main = async (): Promise<void> => {
   assert(compatibility.summary.identicalOverlapPaths >= 1)
   assert(compatibility.summary.baseGameOverrides >= 1)
   assert(existsSync(compatibility.modCatalog.path), 'Compatibility analysis must persist the unified MOD catalog.')
+  assert(compatibility.scriptDefinitions && existsSync(compatibility.scriptDefinitions.path), 'Compatibility analysis must persist the global script definition index.')
+  assert.equal(compatibility.scriptDefinitions.crossPathConflicts, 1)
   const catalog = JSON.parse(await fs.readFile(compatibility.modCatalog.path, 'utf8')) as { catalogDigest: string; summary: { discoveredMods: number; files: number } }
   assert.equal(catalog.catalogDigest, compatibility.modCatalog.digest)
   assert.equal(catalog.summary.discoveredMods, compatibility.summary.installedMods)
@@ -232,7 +238,7 @@ const main = async (): Promise<void> => {
     identicalOverlapPaths: compatibility.summary.identicalOverlapPaths,
     modCatalogDigest: compatibility.modCatalog.digest,
     modCatalogFiles: compatibility.modCatalog.files,
-    checkedRules: ['MOD-ID-UNIQUE', 'MOD-DEPENDENCY-ACYCLIC', 'MOD-REQUIRE-SATISFIED', 'MOD-INCOMPATIBLE', 'MOD-LOAD-AFTER', 'MOD-LOAD-BEFORE', 'MOD-VERSION-RANGE', 'TILEDEF-NUMBER-UNIQUE', 'FILE-OVERLAP-LUA', 'FILE-OVERLAP-SCRIPTS', 'FILE-OVERLAP-TRANSLATION', 'FILE-OVERLAP-HASH-EQUALITY', 'FILE-TRANSLATION-KEYS-DISJOINT', 'BASE-PATH-OVERRIDE', 'B42-COMPATIBLE-LAYER']
+    checkedRules: ['MOD-ID-UNIQUE', 'MOD-DEPENDENCY-ACYCLIC', 'MOD-REQUIRE-SATISFIED', 'MOD-INCOMPATIBLE', 'MOD-LOAD-AFTER', 'MOD-LOAD-BEFORE', 'MOD-VERSION-RANGE', 'TILEDEF-NUMBER-UNIQUE', 'FILE-OVERLAP-LUA', 'FILE-OVERLAP-SCRIPTS', 'PZ-SCRIPT-DEFINITION-UNIQUE-CROSS-PATH', 'PZ-SCRIPT-INDEX-COVERAGE', 'FILE-OVERLAP-TRANSLATION', 'FILE-OVERLAP-HASH-EQUALITY', 'FILE-TRANSLATION-KEYS-DISJOINT', 'BASE-PATH-OVERRIDE', 'B42-COMPATIBLE-LAYER']
   })}`)
 }
 

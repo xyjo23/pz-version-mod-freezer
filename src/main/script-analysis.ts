@@ -8,7 +8,19 @@ export type ScriptSemanticResult = {
   evidence: string[]
 }
 
-type ScriptSource = { modId: string; filePath: string }
+export type ScriptSource = { modId: string; filePath: string; relativePath?: string }
+export type ScriptDefinitionOwner = { modId: string; relativePath: string; sourcePath: string; digest: string; summary: string }
+export type ScriptDefinitionCollectionResult = {
+  files: number
+  parsedFiles: number
+  partialFiles: number
+  definitions: number
+  owners: Record<string, ScriptDefinitionOwner[]>
+  crossPathConflicts: Array<{ key: string; owners: ScriptDefinitionOwner[] }>
+  composableVariations: Array<{ key: string; owners: ScriptDefinitionOwner[] }>
+  identicalSharedDefinitions: number
+  unparsed: Array<{ modId: string; relativePath: string; sourcePath: string; errors: string[] }>
+}
 type Token = { kind: 'atom' | 'string' | 'symbol'; value: string; line: number }
 type Definition = {
   key: string
@@ -48,15 +60,31 @@ const tokenize = (source: string): { tokens: Token[]; errors: string[] } => {
       cursor = end < 0 ? source.length : end
       continue
     }
+    if (char === '-' && source[cursor + 1] === '-') {
+      const end = source.indexOf('\n', cursor + 2)
+      cursor = end < 0 ? source.length : end
+      continue
+    }
     if (char === '/' && source[cursor + 1] === '*') {
       const startLine = line
-      const end = source.indexOf('*/', cursor + 2)
-      if (end < 0) {
+      let depth = 1
+      cursor += 2
+      while (cursor < source.length && depth > 0) {
+        if (source[cursor] === '/' && source[cursor + 1] === '*') {
+          depth += 1
+          cursor += 2
+        } else if (source[cursor] === '*' && source[cursor + 1] === '/') {
+          depth -= 1
+          cursor += 2
+        } else {
+          if (source[cursor] === '\n') line += 1
+          cursor += 1
+        }
+      }
+      if (depth > 0) {
         errors.push(`第 ${startLine} 行的块注释没有结束。`)
         break
       }
-      line += (source.slice(cursor, end + 2).match(/\n/g) ?? []).length
-      cursor = end + 2
       continue
     }
     if (char === '"' || char === "'") {
@@ -158,16 +186,18 @@ export const parseScriptText = (source: string, modId = 'fixture'): ParsedScript
   const definitions: Definition[] = []
   let modulesFound = 0
   let cursor = 0
+  if (!tokens.length) return { modId, complete: errors.length === 0, errors: unique(errors), definitions }
   while (cursor < tokens.length) {
     while (tokens[cursor]?.value === ',') cursor += 1
     if (cursor >= tokens.length) break
-    if (tokens[cursor]?.value.toLowerCase() !== 'module' || tokens[cursor + 1]?.kind === 'symbol' || tokens[cursor + 2]?.value !== '{') {
+    const anonymousModule = tokens[cursor]?.value.toLowerCase() === 'module' && tokens[cursor + 1]?.value === '{'
+    if (tokens[cursor]?.value.toLowerCase() !== 'module' || (!anonymousModule && (tokens[cursor + 1]?.kind === 'symbol' || tokens[cursor + 2]?.value !== '{'))) {
       errors.push(`第 ${tokens[cursor]?.line ?? '?'} 行不是可识别的 module 声明。`)
       break
     }
-    const moduleName = tokens[cursor + 1].value
+    const moduleName = anonymousModule ? '<anonymous>' : tokens[cursor + 1].value
     modulesFound += 1
-    const moduleOpen = cursor + 2
+    const moduleOpen = cursor + (anonymousModule ? 1 : 2)
     const moduleClose = matchingBrace(tokens, moduleOpen)
     if (moduleClose === null) {
       errors.push(`module ${moduleName} 的大括号没有结束。`)
@@ -254,5 +284,61 @@ export const analyzeScriptSemantics = async (sources: ScriptSource[]): Promise<S
   return {
     status: 'script-definitions-disjoint',
     evidence: [`解析 ${parsed.length} 个文件、${parsed.reduce((sum, entry) => sum + entry.definitions.length, 0)} 个定义；没有发现跨 MOD 同名定义。`]
+  }
+}
+
+export const analyzeScriptCollection = async (sources: ScriptSource[]): Promise<ScriptDefinitionCollectionResult> => {
+  const parsed: Array<{ source: ScriptSource; result: ParsedScript }> = []
+  for (let index = 0; index < sources.length; index += 64) {
+    const batch = sources.slice(index, index + 64)
+    parsed.push(...await Promise.all(batch.map(async (source) => ({ source, result: await readAndParse(source) }))))
+  }
+  const ownerMap = new Map<string, ScriptDefinitionOwner[]>()
+  const unparsed: ScriptDefinitionCollectionResult['unparsed'] = []
+  let definitions = 0
+  for (const { source, result } of parsed) {
+    if (!result.complete) {
+      unparsed.push({
+        modId: source.modId,
+        relativePath: source.relativePath ?? source.filePath,
+        sourcePath: source.filePath,
+        errors: result.errors
+      })
+      continue
+    }
+    definitions += result.definitions.length
+    for (const definition of result.definitions) {
+      const owners = ownerMap.get(definition.key) ?? []
+      owners.push({
+        modId: source.modId,
+        relativePath: source.relativePath ?? source.filePath,
+        sourcePath: source.filePath,
+        digest: definition.digest,
+        summary: definition.summary
+      })
+      ownerMap.set(definition.key, owners)
+    }
+  }
+  const owners = Object.fromEntries([...ownerMap].sort(([left], [right]) => left.localeCompare(right, 'en')).map(([key, entries]) => [key, entries.sort((left, right) => left.modId.localeCompare(right.modId, 'en') || left.relativePath.localeCompare(right.relativePath, 'en'))]))
+  const shared = Object.entries(owners).filter(([, entries]) => new Set(entries.map((entry) => entry.modId)).size > 1)
+  const crossPath = shared.filter(([, entries]) => new Set(entries.map((entry) => entry.relativePath.replace(/\\/g, '/').toLowerCase())).size > 1)
+  const divergentCrossPath = crossPath.filter(([, entries]) => new Set(entries.map((entry) => entry.digest)).size > 1)
+  const isComposable = (key: string, entries: ScriptDefinitionOwner[]): boolean => /\.xuiSkin\s/i.test(key) || (/\.model\s/i.test(key) && entries.every((entry) => /(?:^|；)attachment\s/i.test(entry.summary)))
+  const composableVariations = divergentCrossPath
+    .filter(([key, entries]) => isComposable(key, entries))
+    .map(([key, entries]) => ({ key, owners: entries }))
+  const crossPathConflicts = divergentCrossPath
+    .filter(([key, entries]) => !isComposable(key, entries))
+    .map(([key, entries]) => ({ key, owners: entries }))
+  return {
+    files: sources.length,
+    parsedFiles: sources.length - unparsed.length,
+    partialFiles: unparsed.length,
+    definitions,
+    owners,
+    crossPathConflicts,
+    composableVariations,
+    identicalSharedDefinitions: crossPath.filter(([, entries]) => new Set(entries.map((entry) => entry.digest)).size === 1).length,
+    unparsed
   }
 }

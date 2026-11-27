@@ -376,6 +376,9 @@ const CompatibilityResults = ({ report }: { report: CompatibilityReport }): Reac
     <div className={`identity-evidence catalog-evidence ${report.modCatalog.completeness}`}>
       <Database /><div><b>统一 MOD 数据库 · {report.modCatalog.completeness === 'complete' ? '证据完整' : '证据不完整'}</b><span>{report.modCatalog.files} 个有效文件 · JAR {report.modCatalog.jars} · Class {report.modCatalog.classes} · 本地二进制 {report.modCatalog.nativeBinaries}</span><code>{report.modCatalog.digest}</code><small>{report.modCatalog.path}</small></div>
     </div>
+    {report.scriptDefinitions && <div className={`identity-evidence catalog-evidence ${report.scriptDefinitions.partialFiles ? 'partial' : 'complete'}`}>
+      <FileCode2 /><div><b>全局 PZ 脚本实体索引 · {report.scriptDefinitions.partialFiles ? '覆盖不完整' : '覆盖完整'}</b><span>{report.scriptDefinitions.definitions} 个定义 · 覆盖差异 {report.scriptDefinitions.crossPathConflicts} · 扩展组合 {report.scriptDefinitions.composableVariations} · 未解析 {report.scriptDefinitions.partialFiles}</span><code>{report.scriptDefinitions.digest}</code><small>{report.scriptDefinitions.path}</small></div>
+    </div>}
     <div className="compatibility-columns">
       <div className="compatibility-issues">
         <div className="report-section-title"><h3>规则结果</h3><span>{report.issues.filter((entry) => entry.appliesToScope).length} 项影响当前范围 · {report.issues.length} 项已列出</span></div>
