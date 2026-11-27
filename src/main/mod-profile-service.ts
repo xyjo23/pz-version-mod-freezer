@@ -7,6 +7,8 @@ import { app, dialog } from 'electron'
 import type {
   CompatibilityContext,
   CompatibilityReport,
+  ModLoadoutMutationResult,
+  ModLoadoutPlan,
   ModProfile,
   ModProfileComparison,
   ModProfileListResult,
@@ -14,6 +16,7 @@ import type {
   ModProfileTransferResult
 } from '../shared/types'
 import { analyzeCompatibility } from './compatibility-service'
+import { planModLoadout } from './mod-loadout-planner'
 import { canonicalizeShareValue } from './share-package-format'
 import { digestModProfile, MOD_PROFILE_ID, MOD_PROFILE_SHA256, rewriteSaveMods, rewriteServerLoadout, validateModProfile, validateModProfileName } from './mod-profile-format'
 import { assertPathWithin, atomicWriteFileIfChanged, atomicWriteJsonIfChanged, isPathWithin, normalizeRoot } from './safe-write'
@@ -245,23 +248,76 @@ export const compareModProfile = async (profileId: string, contextPath?: string)
   buildComparison(await readProfile(profileId), await analyzeCompatibility(), contextPath)
 )
 
-export const applyModProfile = async (profileId: string, previewToken: string, contextPath?: string): Promise<ModProfileMutationResult> => {
-  if (!MOD_PROFILE_SHA256.test(previewToken)) throw new Error('预览令牌无效，请重新比较。')
-  const profile = await readProfile(profileId)
-  const report = await analyzeCompatibility()
-  const comparison = await buildComparison(profile, report, contextPath)
-  if (!comparison.canApply || !comparison.target || !comparison.previewToken) return { ok: false, message: comparison.summary, operationId: null, backupPath: null, comparison }
-  if (comparison.previewToken !== previewToken.toUpperCase()) throw new Error('上下文或游戏状态在预览后发生变化，请重新比较。')
-  if (comparison.status === 'exact') return { ok: true, message: '当前上下文已经与配置档案一致，没有写入文件。', operationId: null, backupPath: null, comparison }
+const validatePlannerRequest = (value: unknown): string[] => {
+  if (!Array.isArray(value) || value.length > 5000 || value.some((entry) => typeof entry !== 'string' || entry.length > 512 || /[\r\n,;{}=]/.test(entry))) {
+    throw new Error('目标 Mod ID 清单无效或超过数量限制。')
+  }
+  return value as string[]
+}
 
-  const context = comparison.target
+const buildModLoadoutPreview = async (report: CompatibilityReport, contextPath: string, rawRequestedModIds: string[]): Promise<ModLoadoutPlan> => {
+  const requestedModIds = validatePlannerRequest(rawRequestedModIds)
+  const context = selectContext(report, contextPath)
+  const planned = planModLoadout(report.mods, context?.modIds ?? [], requestedModIds, context?.kind === 'server' ? context.workshopIds : null, report.identity.version)
+  const blockers = [...planned.blockers]
+  const warnings = [...planned.warnings]
+  if (!context) blockers.unshift('重新分析后找不到所选存档或服务器配置。')
+  if (!report.identity.jarSha256 || report.identity.status === 'cache-only' || report.identity.status === 'unknown') blockers.push('当前游戏二进制身份无法验证，不能安全计算 MOD 版本与顺序。')
+  if (report.modCatalog.completeness === 'partial') blockers.push('统一 MOD 数据库证据不完整，无法安全确认依赖与加载顺序。')
+  let sourceFileSha256: string | null = null
+  let previewToken: string | null = null
+  if (context && !blockers.length) {
+    await assertWritableContext(context)
+    sourceFileSha256 = await hashFile(context.path)
+    previewToken = createHash('sha256').update(canonicalizeShareValue({
+      targetPath: normalizeRoot(context.path).toLowerCase(),
+      sourceFileSha256,
+      game: report.identity,
+      requestedModIds: planned.requestedModIds,
+      orderedModIds: planned.orderedModIds,
+      workshopIds: planned.workshopIds
+    }), 'utf8').digest('hex').toUpperCase()
+  }
+  const exact = Boolean(context && !planned.orderChanged && !planned.workshopOrderChanged)
+  return {
+    previewedAt: new Date().toISOString(),
+    status: blockers.length ? 'blocked' : exact ? 'exact' : 'different',
+    canApply: !blockers.length,
+    target: context,
+    requestedModIds: planned.requestedModIds,
+    orderedModIds: planned.orderedModIds,
+    workshopIds: planned.workshopIds,
+    autoAddedDependencies: planned.autoAddedDependencies,
+    addedModIds: planned.addedModIds,
+    removedModIds: planned.removedModIds,
+    orderChanged: planned.orderChanged,
+    workshopOrderChanged: planned.workshopOrderChanged,
+    blockers: [...new Set(blockers)],
+    warnings: [...new Set(warnings)],
+    sourceFileSha256,
+    previewToken
+  }
+}
+
+export const previewModLoadout = async (contextPath: string, requestedModIds: string[]): Promise<ModLoadoutPlan> => {
+  if (typeof contextPath !== 'string' || !contextPath.trim()) throw new Error('必须选择明确的存档或服务器配置。')
+  return buildModLoadoutPreview(await analyzeCompatibility(), contextPath, requestedModIds)
+}
+
+const writeLoadoutChange = async (
+  context: CompatibilityContext,
+  expectedSourceSha256: string,
+  modIds: string[],
+  workshopIds: string[],
+  referenceId: string
+): Promise<{ operationId: string; backupPath: string }> => {
   const cacheRoot = await assertWritableContext(context)
   const currentRaw = await fs.readFile(context.path, 'utf8')
   const currentHash = await hashFile(context.path)
-  if (currentHash !== comparison.sourceFileSha256) throw new Error('上下文文件在预览后发生变化，请重新比较。')
+  if (currentHash !== expectedSourceSha256) throw new Error('上下文文件在预览后发生变化，请重新比较。')
   const nextRaw = context.kind === 'save'
-    ? rewriteSaveMods(currentRaw, profile.loadout.modIds)
-    : rewriteServerLoadout(currentRaw, profile.loadout.modIds, profile.loadout.workshopIds)
+    ? rewriteSaveMods(currentRaw, modIds)
+    : rewriteServerLoadout(currentRaw, modIds, workshopIds)
   const operationId = randomUUID()
   const receiptRoot = path.join(operationRoot(), operationId)
   const backupPath = path.join(receiptRoot, path.basename(context.path))
@@ -272,7 +328,7 @@ export const applyModProfile = async (profileId: string, previewToken: string, c
   const prepared: ProfileOperationReceipt = {
     schemaVersion: 1,
     operationId,
-    profileId: profile.id,
+    profileId: referenceId,
     targetPath: context.path,
     cacheRoot,
     contextKind: context.kind,
@@ -287,7 +343,32 @@ export const applyModProfile = async (profileId: string, previewToken: string, c
   await atomicWriteFileIfChanged(context.path, nextRaw)
   if (await hashFile(context.path) !== afterSha256) throw new Error('写入后的上下文摘要与预期不一致；备份和恢复收据已保留。')
   await atomicWriteJsonIfChanged(receiptPath, { ...prepared, status: 'Applied' }, { trailingNewline: true })
+  return { operationId, backupPath }
+}
+
+export const applyModProfile = async (profileId: string, previewToken: string, contextPath?: string): Promise<ModProfileMutationResult> => {
+  if (!MOD_PROFILE_SHA256.test(previewToken)) throw new Error('预览令牌无效，请重新比较。')
+  const profile = await readProfile(profileId)
+  const report = await analyzeCompatibility()
+  const comparison = await buildComparison(profile, report, contextPath)
+  if (!comparison.canApply || !comparison.target || !comparison.previewToken) return { ok: false, message: comparison.summary, operationId: null, backupPath: null, comparison }
+  if (comparison.previewToken !== previewToken.toUpperCase()) throw new Error('上下文或游戏状态在预览后发生变化，请重新比较。')
+  if (comparison.status === 'exact') return { ok: true, message: '当前上下文已经与配置档案一致，没有写入文件。', operationId: null, backupPath: null, comparison }
+
+  const { operationId, backupPath } = await writeLoadoutChange(comparison.target, comparison.sourceFileSha256!, profile.loadout.modIds, profile.loadout.workshopIds, profile.id)
   return { ok: true, message: `已应用“${profile.name}”，原文件已备份，可随时撤销。`, operationId, backupPath, comparison }
+}
+
+export const applyModLoadout = async (contextPath: string, requestedModIds: string[], previewToken: string): Promise<ModLoadoutMutationResult> => {
+  if (!MOD_PROFILE_SHA256.test(previewToken)) throw new Error('预览令牌无效，请重新生成安全预览。')
+  const plan = await buildModLoadoutPreview(await analyzeCompatibility(), contextPath, requestedModIds)
+  if (!plan.canApply || !plan.target || !plan.previewToken || !plan.sourceFileSha256) {
+    return { ok: false, message: `存在 ${plan.blockers.length} 个阻断条件，未写入文件。`, operationId: null, backupPath: null, plan }
+  }
+  if (plan.previewToken !== previewToken.toUpperCase()) throw new Error('目标清单、上下文或游戏状态在预览后发生变化，请重新生成预览。')
+  if (plan.status === 'exact') return { ok: true, message: '目标清单与当前上下文已经一致，没有写入文件。', operationId: null, backupPath: null, plan }
+  const result = await writeLoadoutChange(plan.target, plan.sourceFileSha256, plan.orderedModIds, plan.workshopIds, randomUUID())
+  return { ok: true, message: `已更新“${plan.target.name}”的 MOD 清单，原文件已备份，可随时撤销。`, ...result, plan }
 }
 
 const readReceipts = async (): Promise<Array<{ path: string; receipt: ProfileOperationReceipt }>> => {
@@ -308,7 +389,7 @@ const readReceipts = async (): Promise<Array<{ path: string; receipt: ProfileOpe
 
 export const undoModProfile = async (): Promise<ModProfileMutationResult> => {
   const latest = (await readReceipts())[0]
-  if (!latest) return { ok: false, message: '没有可撤销的配置档案操作。', operationId: null, backupPath: null }
+  if (!latest) return { ok: false, message: '没有可撤销的 MOD 清单操作。', operationId: null, backupPath: null }
   const { receipt } = latest
   await assertPathWithin(receipt.cacheRoot, receipt.targetPath, '撤销目标不属于原缓存目录，拒绝恢复')
   if (!existsSync(receipt.backupPath) || await hashFile(receipt.backupPath) !== receipt.beforeSha256) throw new Error('撤销备份缺失或摘要不一致。')
@@ -323,7 +404,7 @@ export const undoModProfile = async (): Promise<ModProfileMutationResult> => {
   const restored = await hashFile(receipt.targetPath)
   if (restored !== receipt.beforeSha256) throw new Error('撤销后的文件摘要不一致。')
   await atomicWriteJsonIfChanged(latest.path, { ...receipt, status: 'Undone', undoneAt: new Date().toISOString() }, { trailingNewline: true })
-  return { ok: true, message: `已撤销对“${receipt.contextName}”的配置档案操作。`, operationId: receipt.operationId, backupPath: receipt.backupPath }
+  return { ok: true, message: `已撤销对“${receipt.contextName}”的 MOD 清单操作。`, operationId: receipt.operationId, backupPath: receipt.backupPath }
 }
 
 export const exportModProfileAt = async (profileId: string, filePath: string): Promise<ModProfileTransferResult> => {

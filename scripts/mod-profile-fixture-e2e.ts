@@ -7,11 +7,13 @@ import { app } from 'electron'
 import { readGameIdentity } from '../src/main/game-identity'
 import {
   applyModProfile,
+  applyModLoadout,
   compareModProfile,
   createModProfile,
   exportModProfileAt,
   importModProfileAt,
   listModProfiles,
+  previewModLoadout,
   undoModProfile
 } from '../src/main/mod-profile-service'
 import type { FreezeConfig, ModProfile } from '../src/shared/types'
@@ -112,6 +114,19 @@ const main = async (): Promise<void> => {
   await fs.appendFile(savePath, '# changed after preview\n', 'utf8')
   await assert.rejects(applyModProfile(profile.id, stalePreview.previewToken!, savePath), /预览后发生变化/)
 
+  const plannerBefore = saveText(['Profile.A'], '# planner fixture\n')
+  await write(savePath, plannerBefore)
+  const plannerPreview = await previewModLoadout(savePath, ['Profile.B'])
+  assert.equal(plannerPreview.status, 'different')
+  assert.deepEqual(plannerPreview.autoAddedDependencies, ['Profile.A'])
+  assert.deepEqual(plannerPreview.orderedModIds, ['Profile.A', 'Profile.B'])
+  assert(plannerPreview.previewToken)
+  const plannerApplied = await applyModLoadout(savePath, ['Profile.B'], plannerPreview.previewToken!)
+  assert.equal(plannerApplied.ok, true)
+  assert.match(await fs.readFile(savePath, 'utf8'), /mod = Profile\.A,[\s\S]*mod = Profile\.B,/)
+  assert.equal((await undoModProfile()).ok, true)
+  assert.equal(await fs.readFile(savePath, 'utf8'), plannerBefore)
+
   await write(savePath, saveText(['Profile.B'], '# receipt tamper fixture\n'))
   const receiptPreview = await compareModProfile(profile.id, savePath)
   const receiptApplied = await applyModProfile(profile.id, receiptPreview.previewToken!, savePath)
@@ -132,6 +147,7 @@ const main = async (): Promise<void> => {
     tamperBlocked: true,
     previewApplyUndo: true,
     stalePreviewBlocked: true,
+    plannerApplyUndo: true,
     unsafeReceiptIgnored: true
   })}`)
 }

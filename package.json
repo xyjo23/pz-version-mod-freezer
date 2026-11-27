@@ -13,7 +13,7 @@
     "test:share": "node --experimental-strip-types --test src/main/share-package-format.test.ts src/main/share-package-fingerprint.test.ts src/main/share-package-match.test.ts src/main/share-package-roundtrip.test.ts",
     "test:launch": "tsx --test src/main/launch-arguments.test.ts src/main/launch-monitor.test.ts",
     "test:mods": "tsx --test src/main/mod-resolver.test.ts src/main/mod-catalog.test.ts",
-    "test:mod-center": "tsx --test src/main/mod-center-model.test.ts",
+    "test:mod-center": "tsx --test src/main/mod-center-model.test.ts src/main/mod-loadout-planner.test.ts",
     "test:profiles": "tsx --test src/main/mod-profile-service.test.ts",
     "test:migration": "tsx --test src/main/quick-migration-service.test.ts",
     "test:translation": "tsx --test src/main/translation-analysis.test.ts",

@@ -39,7 +39,7 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import type { ActionResult, AnalysisConfidence, CompatibilityContext, CompatibilityReport, CompatibilitySeverity, FileOverlapClassification, FreezeVersionSummary, IntegrityReport, LauncherAction, LauncherSnapshot, MigrationMode, MigrationPreview, MigrationSourceType, ModCenterEntry, ModCenterSnapshot, ModProfile, ModProfileComparison, ModProfileListResult, ModSummary, SharePackageInspection, SteamInstallation } from '../../shared/types'
+import type { ActionResult, AnalysisConfidence, CompatibilityContext, CompatibilityReport, CompatibilitySeverity, FileOverlapClassification, FreezeVersionSummary, IntegrityReport, LauncherAction, LauncherSnapshot, MigrationMode, MigrationPreview, MigrationSourceType, ModCenterEntry, ModCenterSnapshot, ModLoadoutPlan, ModProfile, ModProfileComparison, ModProfileListResult, ModSummary, SharePackageInspection, SteamInstallation } from '../../shared/types'
 import { VaultMark } from './VaultMark'
 import { layoutRadarItems } from './radar-layout'
 
@@ -144,7 +144,8 @@ const helpTutorials: HelpTutorial[] = [
     prerequisites: ['已切换到要检查的版本', 'Workshop 与本地 MOD 文件可访问', '如需对照存档或服务器，相关配置必须位于当前版本缓存中'],
     sections: [
       { title: '运行分析', intro: '分析器按游戏实际目录规则选择 MOD 版本，不会只看 Workshop 标题。', steps: [
-        { title: '先查看 MOD 中心', detail: '在 MOD 中心搜索 Mod ID，核对 B42 生效层、依赖、被依赖关系、文件类型和内容摘要。页面是只读的，不会执行或修改 MOD。' },
+        { title: '先查看 MOD 中心', detail: '搜索 Mod ID，核对 B42 生效层、依赖、被依赖关系、文件类型和内容摘要。浏览与重建数据库都是只读操作，不会执行 MOD。' },
+        { title: '按需规划启用清单', detail: '选择一个明确的存档或服务器，编辑目标 Mod ID 后先生成安全预览。只有阻断项为零并再次确认，才会备份并原子更新该上下文；不会删除或改写 MOD 文件。' },
         { title: '进入完整性与兼容性', detail: '先确认页面对应当前版本，再点击“开始兼容性分析”，查看整个启用组合的结论。' },
         { title: '理解身份关系', detail: 'Workshop ID 是发布项目，Mod ID 是游戏加载身份；同一 Workshop 可包含多个 Mod ID 和版本变体。' }
       ] },
@@ -527,6 +528,12 @@ const ModCenterWorkspace = ({ onOpenCompatibility }: { onOpenCompatibility: () =
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<ModCenterFilter>('all')
   const [selectedId, setSelectedId] = useState('')
+  const [plannerContextPath, setPlannerContextPath] = useState('')
+  const [editingLoadout, setEditingLoadout] = useState(false)
+  const [plannedModIds, setPlannedModIds] = useState<string[]>([])
+  const [loadoutPlan, setLoadoutPlan] = useState<ModLoadoutPlan | null>(null)
+  const [plannerBusy, setPlannerBusy] = useState<'preview' | 'apply' | 'undo' | null>(null)
+  const [plannerMessage, setPlannerMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null)
 
   const reload = useCallback(async (): Promise<void> => {
     setLoading(true)
@@ -535,6 +542,8 @@ const ModCenterWorkspace = ({ onOpenCompatibility }: { onOpenCompatibility: () =
       const next = await window.vault.loadModCenter()
       setSnapshot(next)
       setSelectedId((current) => next.mods.some((mod) => mod.catalogId === current) ? current : next.mods[0]?.catalogId ?? '')
+      const nextContexts = [next.activeContext, ...next.serverContexts].filter((context): context is CompatibilityContext => context !== null)
+      setPlannerContextPath((current) => nextContexts.some((context) => context.path === current) ? current : nextContexts[0]?.path ?? '')
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -543,25 +552,90 @@ const ModCenterWorkspace = ({ onOpenCompatibility }: { onOpenCompatibility: () =
   }, [])
 
   useEffect(() => { void reload() }, [reload])
+  const plannerContexts = useMemo(() => {
+    const candidates = [snapshot?.activeContext ?? null, ...(snapshot?.serverContexts ?? [])].filter((context): context is CompatibilityContext => context !== null)
+    const seen = new Set<string>()
+    return candidates.filter((context) => {
+      const key = context.path.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  }, [snapshot])
+  const plannerContext = plannerContexts.find((context) => context.path === plannerContextPath) ?? null
+  const plannedSet = useMemo(() => new Set(plannedModIds), [plannedModIds])
+  const isModActive = useCallback((mod: ModCenterEntry): boolean => editingLoadout ? Boolean(mod.modId && plannedSet.has(mod.modId)) : mod.active, [editingLoadout, plannedSet])
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase()
     return (snapshot?.mods ?? []).filter((mod) => {
       const matchesQuery = !needle || [mod.name, mod.modId, mod.workshopId, mod.rootPath].some((value) => value?.toLowerCase().includes(needle))
-      const matchesFilter = filter === 'all' || (filter === 'active' && mod.active) || (filter === 'inactive' && !mod.active) ||
+      const active = isModActive(mod)
+      const matchesFilter = filter === 'all' || (filter === 'active' && active) || (filter === 'inactive' && !active) ||
         (filter === 'issues' && hasModCenterIssue(mod)) || (filter === 'binary' && mod.flags.hasBinaryCode) ||
         (filter === 'workshop' && mod.source === 'Workshop') || (filter === 'local' && mod.source === 'Local')
       return matchesQuery && matchesFilter
     })
-  }, [filter, query, snapshot])
+  }, [filter, isModActive, query, snapshot])
   const selected = filtered.find((mod) => mod.catalogId === selectedId) ?? filtered[0] ?? null
   const activeKinds = selected ? Object.entries(selected.content.kindCounts).filter(([, count]) => count > 0) : []
+  const selectedActive = selected ? isModActive(selected) : false
+  const missingPlannedIds = plannedModIds.filter((id) => !snapshot?.mods.some((mod) => mod.modId === id))
+
+  const beginLoadoutEdit = (): void => {
+    if (!plannerContext) return
+    setPlannedModIds([...plannerContext.modIds])
+    setLoadoutPlan(null)
+    setPlannerMessage(null)
+    setEditingLoadout(true)
+  }
+  const togglePlannedMod = (mod: ModCenterEntry): void => {
+    if (!mod.modId || mod.flags.duplicateModId || mod.flags.unresolved) return
+    setPlannedModIds((current) => current.includes(mod.modId!) ? current.filter((id) => id !== mod.modId) : [...current, mod.modId!])
+    setLoadoutPlan(null)
+    setPlannerMessage(null)
+  }
+  const previewLoadout = (): void => {
+    if (!plannerContext) return
+    setPlannerBusy('preview')
+    setPlannerMessage(null)
+    void window.vault.previewModLoadout(plannerContext.path, plannedModIds).then((next) => {
+      setLoadoutPlan(next)
+      setPlannedModIds(next.orderedModIds)
+      setPlannerMessage({ tone: next.status === 'blocked' ? 'error' : 'success', text: next.status === 'blocked' ? `发现 ${next.blockers.length} 个阻断条件。` : next.status === 'exact' ? '目标清单已经与当前配置一致。' : '安全预览已生成，请核对差异后再应用。' })
+    }).catch((caught) => setPlannerMessage({ tone: 'error', text: caught instanceof Error ? caught.message : String(caught) })).finally(() => setPlannerBusy(null))
+  }
+  const applyLoadout = (): void => {
+    if (!plannerContext || !loadoutPlan?.previewToken || !loadoutPlan.canApply) return
+    setPlannerBusy('apply')
+    setPlannerMessage(null)
+    void window.vault.applyModLoadout(plannerContext.path, loadoutPlan.requestedModIds, loadoutPlan.previewToken).then(async (result) => {
+      setPlannerMessage({ tone: result.ok ? 'success' : 'error', text: result.message })
+      if (result.ok) {
+        setEditingLoadout(false)
+        setLoadoutPlan(null)
+        await reload()
+      }
+    }).catch((caught) => setPlannerMessage({ tone: 'error', text: caught instanceof Error ? caught.message : String(caught) })).finally(() => setPlannerBusy(null))
+  }
+  const undoLoadout = (): void => {
+    setPlannerBusy('undo')
+    setPlannerMessage(null)
+    void window.vault.undoModProfile().then(async (result) => {
+      setPlannerMessage({ tone: result.ok ? 'success' : 'error', text: result.message })
+      if (result.ok) {
+        setEditingLoadout(false)
+        setLoadoutPlan(null)
+        await reload()
+      }
+    }).catch((caught) => setPlannerMessage({ tone: 'error', text: caught instanceof Error ? caught.message : String(caught) })).finally(() => setPlannerBusy(null))
+  }
 
   if (loading && !snapshot) return <><section className="page-heading enter"><div><span className="eyebrow">MOD CENTER · EVIDENCE DATABASE</span><h1>MOD 中心</h1><p>正在按当前游戏版本重建统一数据库。</p></div></section><div className="mod-center-loading"><LoaderCircle className="spin" /><div><b>正在扫描 B42 版本层与有效文件</b><span>会计算内容摘要、依赖关系与二进制证据；不会执行或修改 MOD。</span></div></div></>
 
   if (error && !snapshot) return <><section className="page-heading enter"><div><span className="eyebrow">MOD CENTER · EVIDENCE DATABASE</span><h1>MOD 中心</h1><p>统一查看当前版本的 MOD 内容和关系。</p></div></section><div className="mod-center-error"><ShieldAlert /><div><b>无法建立 MOD 中心数据库</b><span>{error}</span></div><button className="secondary-button" onClick={() => void reload()}><RefreshCw />重新扫描</button></div></>
 
   return <>
-    <section className="page-heading mod-center-page-heading enter"><div><span className="eyebrow">MOD CENTER · EVIDENCE DATABASE</span><h1>MOD 中心</h1><p>{snapshot?.sourceLabel} · 游戏 {snapshot?.game.version} · Build {snapshot?.game.buildId}</p></div><div className="mod-center-heading-actions"><button className="secondary-button" onClick={onOpenCompatibility}><ShieldCheck />查看兼容性报告</button><button className="secondary-button" disabled={loading} onClick={() => void reload()}>{loading ? <LoaderCircle className="spin" /> : <RefreshCw />}{loading ? '正在重建' : '重新建立数据库'}</button></div></section>
+    <section className="page-heading mod-center-page-heading enter"><div><span className="eyebrow">MOD CENTER · EVIDENCE DATABASE</span><h1>MOD 中心</h1><p>{snapshot?.sourceLabel} · 游戏 {snapshot?.game.version} · Build {snapshot?.game.buildId}</p></div><div className="mod-center-heading-actions"><button className="secondary-button" onClick={onOpenCompatibility}><ShieldCheck />查看兼容性报告</button><button className="secondary-button" disabled={loading || editingLoadout || plannerBusy !== null} onClick={() => void reload()}>{loading ? <LoaderCircle className="spin" /> : <RefreshCw />}{loading ? '正在重建' : '重新建立数据库'}</button></div></section>
     {snapshot && <>
       <section className="mod-center-summary enter delay-1">
         <div><span>已识别</span><b>{snapshot.summary.discoveredMods}</b><small>{snapshot.summary.workshopProjects} 个 Workshop 项目</small></div>
@@ -571,16 +645,31 @@ const ModCenterWorkspace = ({ onOpenCompatibility }: { onOpenCompatibility: () =
         <div><span>代码与二进制</span><b>{snapshot.summary.modsWithBinaryCode}</b><small>含 JAR、Class 或本地二进制</small></div>
         <div className={snapshot.completeness === 'complete' ? 'safe' : 'warning'}><span>证据覆盖</span><b>{snapshot.completeness === 'complete' ? '完整' : '不完整'}</b><small>{snapshot.summary.files} 个有效文件</small></div>
       </section>
+      <section className={`mod-loadout-bar ${editingLoadout ? 'editing' : ''}`}>
+        <div className="mod-loadout-copy"><SlidersHorizontal /><div><b>{editingLoadout ? '正在规划 MOD 启用清单' : '安全启用规划器'}</b><span>{editingLoadout ? '点击列表右侧开关选择目标，生成预览前不会写入文件。' : '只修改所选存档或服务器的启用清单，不删除任何 MOD 文件。'}</span></div></div>
+        <label><span>目标上下文</span><select value={plannerContextPath} disabled={editingLoadout || plannerBusy !== null || !plannerContexts.length} onChange={(event) => { setPlannerContextPath(event.target.value); setLoadoutPlan(null); setPlannerMessage(null) }}>{plannerContexts.length ? plannerContexts.map((context) => <option value={context.path} key={context.path}>{context.kind === 'save' ? '存档' : '服务器'} · {context.name} · {context.modIds.length} MOD</option>) : <option value="">没有明确上下文</option>}</select></label>
+        {editingLoadout ? <div className="mod-loadout-actions"><span><b>{plannedModIds.length}</b> 个目标 Mod ID</span><button className="secondary-button" disabled={plannerBusy !== null} onClick={() => { setPlannedModIds([...(plannerContext?.modIds ?? [])]); setLoadoutPlan(null); setPlannerMessage(null) }}>重置</button><button className="secondary-button" disabled={plannerBusy !== null} onClick={() => { setEditingLoadout(false); setLoadoutPlan(null); setPlannerMessage(null) }}>取消</button><button className="tool-action primary" disabled={!plannerContext || plannerBusy !== null} onClick={previewLoadout}>{plannerBusy === 'preview' ? <LoaderCircle className="spin" /> : <ShieldCheck />}{plannerBusy === 'preview' ? '正在重新分析' : '生成安全预览'}</button></div> : <div className="mod-loadout-actions"><button className="secondary-button" disabled={plannerBusy !== null} onClick={undoLoadout}>{plannerBusy === 'undo' ? <LoaderCircle className="spin" /> : <RefreshCw />}撤销上次清单变更</button><button className="tool-action primary" disabled={!plannerContext || loading} onClick={beginLoadoutEdit}><SlidersHorizontal />编辑启用清单</button></div>}
+      </section>
+      {plannerMessage && <div className={`profile-message ${plannerMessage.tone}`}>{plannerMessage.tone === 'success' ? <CheckCircle2 /> : <CircleAlert />}<span>{plannerMessage.text}</span></div>}
+      {editingLoadout && missingPlannedIds.length > 0 && <div className="mod-loadout-missing"><ShieldAlert /><div><b>当前配置中有 {missingPlannedIds.length} 个未安装 Mod ID</b><span>必须移除或恢复文件后才能应用：{missingPlannedIds.map((id) => <button key={id} onClick={() => { setPlannedModIds((current) => current.filter((entry) => entry !== id)); setLoadoutPlan(null) }}>{id}<X /></button>)}</span></div></div>}
+      {loadoutPlan && <section className={`mod-loadout-preview ${loadoutPlan.status}`}>
+        <div className="mod-loadout-preview-head"><div><span className="eyebrow">LOADOUT DIFF · VERIFIED PREVIEW</span><h3>{loadoutPlan.status === 'blocked' ? '存在阻断条件' : loadoutPlan.status === 'exact' ? '清单已经一致' : '等待确认应用'}</h3></div><div className="mod-loadout-diff"><span>启用 <b>+{loadoutPlan.addedModIds.length}</b></span><span>停用 <b>-{loadoutPlan.removedModIds.length}</b></span><span>依赖补全 <b>{loadoutPlan.autoAddedDependencies.length}</b></span><span>顺序 <b>{loadoutPlan.orderChanged || loadoutPlan.workshopOrderChanged ? '调整' : '不变'}</b></span></div></div>
+        {loadoutPlan.autoAddedDependencies.length > 0 && <div className="profile-evidence warning"><GitBranch />自动补入依赖：{loadoutPlan.autoAddedDependencies.join('、')}</div>}
+        {loadoutPlan.blockers.map((blocker) => <div className="profile-evidence blocker" key={blocker}><ShieldAlert />{blocker}</div>)}
+        {loadoutPlan.warnings.filter((warning) => !warning.startsWith('已自动补入')).map((warning) => <div className="profile-evidence warning" key={warning}><CircleAlert />{warning}</div>)}
+        <details><summary>查看最终加载顺序（{loadoutPlan.orderedModIds.length}）</summary><ol>{loadoutPlan.orderedModIds.map((id, index) => <li key={id}><span>{index + 1}</span><code>{id}</code></li>)}</ol></details>
+        <button className="migration-execute" disabled={!loadoutPlan.canApply || loadoutPlan.status !== 'different' || !loadoutPlan.previewToken || plannerBusy !== null} onClick={applyLoadout}>{plannerBusy === 'apply' ? <LoaderCircle className="spin" /> : <ShieldCheck />}{plannerBusy === 'apply' ? '正在备份并写入' : loadoutPlan.status === 'exact' ? '无需写入' : '确认应用并保留撤销备份'}</button>
+      </section>}
       <section className="mod-center-layout enter delay-2">
         <div className="mod-center-index">
           <div className="mod-center-controls"><label><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称、Mod ID、Workshop ID 或路径" /></label><div className="mod-center-filters">{([
             ['all', '全部'], ['active', '启用'], ['inactive', '未启用'], ['issues', '有问题'], ['binary', '含代码'], ['workshop', 'Workshop'], ['local', '本地']
           ] as Array<[ModCenterFilter, string]>).map(([id, label]) => <button className={filter === id ? 'active' : ''} key={id} onClick={() => setFilter(id)}>{label}</button>)}</div></div>
           <div className="mod-center-result-count">显示 {filtered.length} / {snapshot.mods.length} 个 MOD</div>
-          <div className="mod-center-list">{filtered.map((mod) => <button className={`mod-center-row ${selected?.catalogId === mod.catalogId ? 'selected' : ''}`} key={mod.catalogId} onClick={() => setSelectedId(mod.catalogId)}><span className={`mod-center-state ${mod.active ? 'active' : ''}`} /><div><b>{mod.name}</b><code>{mod.modId ?? '未声明 Mod ID'}</code><small>{mod.source === 'Workshop' ? `Workshop ${mod.workshopId ?? '未知'}` : '本地 MOD'} · {mod.content.totalFiles} 文件</small></div><span className="mod-center-flags">{mod.dependencies.missingRequired.length > 0 && <i className="danger">缺依赖</i>}{mod.dependencies.activeIncompatible.length > 0 && <i className="danger">启用互斥</i>}{mod.flags.duplicateModId && <i className="danger">重复 ID</i>}{mod.flags.unresolved && <i>未解析</i>}{mod.flags.hasBinaryCode && <i className="code">代码</i>}</span></button>)}{!filtered.length && <div className="mod-center-no-results"><Search /><b>没有符合条件的 MOD</b><span>调整搜索内容或筛选条件。</span></div>}</div>
+          <div className="mod-center-list">{filtered.map((mod) => <article className={`mod-center-row ${selected?.catalogId === mod.catalogId ? 'selected' : ''}`} key={mod.catalogId} role="button" tabIndex={0} onClick={() => setSelectedId(mod.catalogId)} onKeyDown={(event) => { if (event.key === 'Enter') setSelectedId(mod.catalogId) }}><span className={`mod-center-state ${isModActive(mod) ? 'active' : ''}`} /><div><b>{mod.name}</b><code>{mod.modId ?? '未声明 Mod ID'}</code><small>{mod.source === 'Workshop' ? `Workshop ${mod.workshopId ?? '未知'}` : '本地 MOD'} · {mod.content.totalFiles} 文件</small></div><span className="mod-center-flags">{mod.dependencies.missingRequired.length > 0 && <i className="danger">缺依赖</i>}{mod.dependencies.activeIncompatible.length > 0 && <i className="danger">启用互斥</i>}{mod.flags.duplicateModId && <i className="danger">重复 ID</i>}{mod.flags.unresolved && <i>未解析</i>}{mod.flags.hasBinaryCode && <i className="code">代码</i>}{editingLoadout && <button className={`mod-plan-toggle ${isModActive(mod) ? 'active' : ''}`} disabled={!mod.modId || mod.flags.duplicateModId || mod.flags.unresolved} aria-label={`${isModActive(mod) ? '停用' : '启用'} ${mod.name}`} onClick={(event) => { event.stopPropagation(); togglePlannedMod(mod) }}>{isModActive(mod) ? <CheckCircle2 /> : <span />}</button>}</span></article>)}{!filtered.length && <div className="mod-center-no-results"><Search /><b>没有符合条件的 MOD</b><span>调整搜索内容或筛选条件。</span></div>}</div>
         </div>
         <aside className="mod-center-detail">{selected ? <>
-          <header><div><span className="eyebrow">MOD EVIDENCE</span><h2>{selected.name}</h2><p>{selected.modId ?? '未声明 Mod ID'}</p></div><span className={`mod-detail-active ${selected.active ? 'active' : ''}`}>{selected.active ? '当前启用' : '当前未启用'}</span></header>
+          <header><div><span className="eyebrow">MOD EVIDENCE</span><h2>{selected.name}</h2><p>{selected.modId ?? '未声明 Mod ID'}</p></div><span className={`mod-detail-active ${selectedActive ? 'active' : ''}`}>{editingLoadout ? selectedActive ? '计划启用' : '计划停用' : selectedActive ? '当前启用' : '当前未启用'}</span></header>
           {(hasModCenterIssue(selected) || selected.flags.hasBinaryCode) && <div className="mod-detail-alerts">{selected.dependencies.missingRequired.length > 0 && <div className="danger"><ShieldAlert /><span><b>缺少必需依赖</b><small>{selected.dependencies.missingRequired.join('、')}</small></span></div>}{selected.dependencies.activeIncompatible.length > 0 && <div className="danger"><ShieldAlert /><span><b>声明的互斥 MOD 当前同时启用</b><small>{selected.dependencies.activeIncompatible.join('、')}</small></span></div>}{selected.flags.duplicateModId && <div className="danger"><CircleAlert /><span><b>Mod ID 存在重复来源</b><small>兼容性报告会列出所有实际目录。</small></span></div>}{selected.flags.unresolved && <div><CircleAlert /><span><b>B42 版本层未完整解析</b><small>{selected.version.resolutionIssue ?? '没有可用 Mod ID。'}</small></span></div>}{selected.flags.incompleteEvidence && <div><CircleAlert /><span><b>内容证据不完整</b><small>{selected.content.unreadable} 项不可读，{selected.content.skippedLinks} 个目录链接被跳过。</small></span></div>}{selected.flags.hasBinaryCode && <div className="code"><FileCode2 /><span><b>包含可执行代码证据</b><small>JAR {selected.content.jars} · Class {selected.content.classes} · 本地二进制 {selected.content.nativeBinaries}；这里只登记，不执行。</small></span></div>}</div>}
           <section className="mod-detail-section"><h3>B42 版本解析</h3><dl><div><dt>目标游戏</dt><dd>{selected.version.target}</dd></div><div><dt>选中变体</dt><dd>{selected.version.selected ?? '未解析'}</dd></div><div><dt>可见变体</dt><dd>{selected.version.variants.join('、') || '仅 common'}</dd></div><div><dt>生效层</dt><dd>{selected.version.layers.length}</dd></div></dl><div className="mod-layer-list">{selected.version.layers.map((layer, index) => <span key={layer}><i>{index + 1}</i><code>{layer}</code></span>)}</div></section>
           <section className="mod-detail-section"><h3><GitBranch />依赖与顺序</h3><div className="mod-relations"><div><span>必需依赖</span><p>{selected.dependencies.require.join('、') || '无'}</p></div><div><span>依赖此 MOD</span><p>{selected.dependencies.requiredBy.map((mod) => mod.modId ?? mod.name).join('、') || '无'}</p></div><div><span>互斥项</span><p>{selected.dependencies.incompatible.join('、') || '无'}{selected.dependencies.activeIncompatible.length ? `（当前同时启用：${selected.dependencies.activeIncompatible.join('、')}）` : ''}</p></div><div><span>应后加载</span><p>{selected.dependencies.loadAfter.join('、') || '无'}</p></div><div><span>应前加载</span><p>{selected.dependencies.loadBefore.join('、') || '无'}</p></div></div></section>
@@ -588,7 +677,7 @@ const ModCenterWorkspace = ({ onOpenCompatibility }: { onOpenCompatibility: () =
           <section className="mod-detail-section technical"><h3>技术证据</h3><div><span>内容 SHA-256</span><code>{selected.content.contentDigest}</code></div><div><span>实际目录</span><code>{selected.rootPath}</code></div><button className="secondary-button" onClick={() => void window.vault.openPath(selected.rootPath)}><FolderOpen />打开 MOD 目录</button></section>
         </> : <div className="mod-center-no-selection"><Database /><b>选择一个 MOD</b><span>这里会显示版本层、依赖和文件证据。</span></div>}</aside>
       </section>
-      <section className="mod-center-footnote"><ShieldCheck /><span><b>只读工作区</b>MOD 中心每次刷新都会重新运行兼容性扫描；搜索和查看不会修改、启用、停用或执行任何 MOD。</span><code>{snapshot.catalogDigest}</code></section>
+      <section className="mod-center-footnote"><ShieldCheck /><span><b>默认只读</b>搜索和查看不会修改或执行 MOD；只有在启用规划器中生成预览并再次确认，才会备份后更新所选存档或服务器清单。</span><code>{snapshot.catalogDigest}</code></section>
     </>}
   </>
 }

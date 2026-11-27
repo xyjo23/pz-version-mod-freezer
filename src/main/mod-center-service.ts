@@ -18,5 +18,5 @@ export const loadModCenter = async (): Promise<ModCenterSnapshot> => {
     !parsed.summary || !parsed.indexes || !Array.isArray(parsed.mods) ||
     !Array.isArray(parsed.methodology) || !Array.isArray(parsed.limitations)
   ) throw new Error('统一 MOD 数据库与刚完成的兼容性分析不一致，拒绝显示过期结果。')
-  return buildModCenterSnapshot(parsed as ModCatalog)
+  return buildModCenterSnapshot(parsed as ModCatalog, report.activeContext, report.serverContexts)
 }

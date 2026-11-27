@@ -510,7 +510,36 @@ export type ModCenterSnapshot = {
   }
   methodology: string[]
   limitations: string[]
+  activeContext: CompatibilityContext | null
+  serverContexts: CompatibilityContext[]
   mods: ModCenterEntry[]
+}
+
+export type ModLoadoutPlan = {
+  previewedAt: string
+  status: 'exact' | 'different' | 'blocked'
+  canApply: boolean
+  target: CompatibilityContext | null
+  requestedModIds: string[]
+  orderedModIds: string[]
+  workshopIds: string[]
+  autoAddedDependencies: string[]
+  addedModIds: string[]
+  removedModIds: string[]
+  orderChanged: boolean
+  workshopOrderChanged: boolean
+  blockers: string[]
+  warnings: string[]
+  sourceFileSha256: string | null
+  previewToken: string | null
+}
+
+export type ModLoadoutMutationResult = {
+  ok: boolean
+  message: string
+  operationId: string | null
+  backupPath: string | null
+  plan?: ModLoadoutPlan
 }
 
 export type ModProfile = {
@@ -662,6 +691,8 @@ export type VaultApi = {
   analyzeIntegrity: () => Promise<IntegrityReport>
   analyzeCompatibility: () => Promise<CompatibilityReport>
   loadModCenter: () => Promise<ModCenterSnapshot>
+  previewModLoadout: (contextPath: string, requestedModIds: string[]) => Promise<ModLoadoutPlan>
+  applyModLoadout: (contextPath: string, requestedModIds: string[], previewToken: string) => Promise<ModLoadoutMutationResult>
   listModProfiles: () => Promise<ModProfileListResult>
   createModProfile: (name: string, contextPath?: string) => Promise<ModProfile>
   compareModProfile: (profileId: string, contextPath?: string) => Promise<ModProfileComparison>

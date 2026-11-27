@@ -1,8 +1,8 @@
-import type { ModCatalog, ModCatalogFileKind, ModCenterSnapshot } from '../shared/types'
+import type { CompatibilityContext, ModCatalog, ModCatalogFileKind, ModCenterSnapshot } from '../shared/types'
 
 const fileKinds: ModCatalogFileKind[] = ['lua', 'pz-script', 'java-archive', 'jvm-bytecode', 'native-binary', 'xml', 'json', 'translation', 'map', 'asset', 'media', 'metadata', 'other']
 
-export const buildModCenterSnapshot = (catalog: ModCatalog): ModCenterSnapshot => {
+export const buildModCenterSnapshot = (catalog: ModCatalog, activeContext: CompatibilityContext | null = null, serverContexts: CompatibilityContext[] = []): ModCenterSnapshot => {
   const byCatalogId = new Map(catalog.mods.map((mod) => [mod.catalogId, mod]))
   const installedModIds = new Set(Object.keys(catalog.indexes.byModId))
   const mods = catalog.mods.map((mod) => {
@@ -67,6 +67,8 @@ export const buildModCenterSnapshot = (catalog: ModCatalog): ModCenterSnapshot =
     },
     methodology: [...catalog.methodology],
     limitations: [...catalog.limitations],
+    activeContext,
+    serverContexts,
     mods
   }
 }

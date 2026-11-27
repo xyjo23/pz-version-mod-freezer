@@ -2,7 +2,10 @@
 
 ## Unreleased
 
-- Added a dedicated read-only MOD Center backed by a fresh unified-catalog rebuild for the active Steam or frozen version.
+- Added a safe MOD loadout planner for explicit save and server contexts with local draft toggles, dependency completion and deterministic topological ordering.
+- Added revalidated, token-bound loadout previews that block missing dependencies, duplicate IDs, active incompatibilities, order cycles, unusable B42 layers, invalid version ranges, incomplete evidence, unverified game identity and stale source files.
+- Added atomic save/server list updates with crash-safe receipts, hash-guarded one-step undo and no MOD file deletion, download or execution.
+- Added a dedicated browse-by-default MOD Center backed by a fresh unified-catalog rebuild for the active Steam or frozen version.
 - Added search and evidence filters for active, inactive, problematic, binary-bearing, Workshop and local MODs.
 - Added per-MOD B42 layer resolution, dependency and reverse-dependency views, installed incompatibility evidence, file-kind counts and content digests.
 - Kept MOD Center IPC payloads bounded to summary evidence instead of transferring every scanned file to the renderer.
