@@ -1372,7 +1372,7 @@ export const App = (): React.JSX.Element => {
           <aside className="help-modal-nav">
             <div className="help-modal-brand"><BookOpen /><div><span>使用教程</span><b>生存者手册</b></div></div>
             <nav aria-label="教程主题">{helpTutorials.map((topic) => <button className={topic.id === selectedHelpTutorial.id ? 'active' : ''} key={topic.id} onClick={() => setActiveHelpTopic(topic.id)}><span>{topic.number}</span><div><b>{topic.title}</b><small>{topic.eyebrow}</small></div><ChevronRight /></button>)}</nav>
-            <div className="help-modal-version"><span>当前教程版本</span><b>v0.9 · B42</b></div>
+            <div className="help-modal-version"><span>当前教程版本</span><b>v0.9.1 · B42</b></div>
           </aside>
           <div className="help-modal-main">
             <header className="help-modal-header"><div><span className="eyebrow">{selectedHelpTutorial.eyebrow}</span><h2 id="help-tutorial-title">{selectedHelpTutorial.title}</h2><p>{selectedHelpTutorial.summary}</p></div><button className="icon-button" onClick={() => setActiveHelpTopic(null)} aria-label="关闭教程"><X /></button></header>

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.1 - 2026-11-28
+
 - Added a workspace-aware visual system with distinct accent colors, ambient depth, page transitions and clearer interactive states across all primary views.
 - Added a searchable `Ctrl+K` quick-navigation palette with keyboard focus containment and safe, navigation-only commands.
 - Added a persistent motion preference that preserves status feedback while disabling non-essential movement and respects the operating system reduced-motion setting.
