@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict'
-import { promises as fs } from 'node:fs'
+import { createWriteStream, promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { pipeline } from 'node:stream/promises'
 import test from 'node:test'
+
+import { ZipFile } from 'yazl'
 
 import type { GameIdentity } from '../shared/types'
 import { buildModCatalog, persistModCatalog } from './mod-catalog'
@@ -11,6 +14,14 @@ import { discoverLocalMods } from './mod-resolver'
 const write = async (filePath: string, contents: string | Buffer): Promise<void> => {
   await fs.mkdir(path.dirname(filePath), { recursive: true })
   await fs.writeFile(filePath, contents)
+}
+
+const writeJar = async (filePath: string): Promise<void> => {
+  await fs.mkdir(path.dirname(filePath), { recursive: true })
+  const zip = new ZipFile()
+  zip.addBuffer(Buffer.from('Manifest-Version: 1.0\r\n\r\n'), 'META-INF/MANIFEST.MF')
+  zip.end()
+  await pipeline(zip.outputStream, createWriteStream(filePath))
 }
 
 const identity: GameIdentity = {
@@ -25,7 +36,7 @@ test('统一数据库记录 B42 生效层、文件哈希、二进制和依赖索
     const versioned = path.join(modsRoot, 'WS111__Versioned')
     await write(path.join(versioned, 'common', 'media', 'lua', 'shared.lua'), 'return "common"')
     await write(path.join(versioned, '42.22', 'media', 'lua', 'shared.lua'), 'return "selected"')
-    await write(path.join(versioned, '42.22', 'lib', 'example.jar'), Buffer.from([0x50, 0x4b, 0x03, 0x04]))
+    await writeJar(path.join(versioned, '42.22', 'lib', 'example.jar'))
     await write(path.join(versioned, '42.22', 'classes', 'Example.class'), Buffer.from([0xca, 0xfe, 0xba, 0xbe]))
     await write(path.join(versioned, '42.22', 'native', 'helper.dll'), Buffer.from([0x4d, 0x5a]))
     await write(path.join(versioned, '42.22', 'mod.info'), [
@@ -54,6 +65,8 @@ test('统一数据库记录 B42 生效层、文件哈希、二进制和依赖索
     assert.deepEqual(first.indexes.byModId['Catalog.Example'], [versionedEntry.catalogId])
     assert.deepEqual(first.indexes.requiredBy['Catalog.Base'], [versionedEntry.catalogId])
     assert.equal(first.summary.jars, 1)
+    assert.equal(first.summary.javaArchivesAnalyzed, 1)
+    assert.equal(first.summary.javaArchiveErrors, 0)
     assert.equal(first.summary.classes, 1)
     assert.equal(first.summary.nativeBinaries, 1)
 

@@ -17,7 +17,7 @@ const entry = (value: Partial<ModCatalogEntry> & Pick<ModCatalogEntry, 'catalogI
   dependencies: value.dependencies ?? { require: [], incompatible: [], loadAfter: [], loadBefore: [] },
   metadata: value.metadata ?? { path: null, sha256: null, readError: null },
   content: value.content ?? {
-    files: [], totalFiles: 0, totalBytes: 0, contentDigest: 'C'.repeat(64), layerOverrides: [], skippedLinks: [], unreadable: [], jars: [], classes: [], nativeBinaries: []
+    files: [], totalFiles: 0, totalBytes: 0, contentDigest: 'C'.repeat(64), layerOverrides: [], skippedLinks: [], unreadable: [], jars: [], classes: [], nativeBinaries: [], javaArchives: []
   },
   evidence: value.evidence ?? []
 })
@@ -29,7 +29,8 @@ test('MOD 中心投影保留依赖、重复 ID、文件类型和证据边界', (
       dependencies: { require: ['Missing.Mod'], incompatible: ['Fixture.B'], loadAfter: [], loadBefore: [] },
       content: {
         files: [{ relativePath: 'media/lua/a.lua', sourcePath: 'C:\\a.lua', layerPath: 'C:\\mods\\a', bytes: 10, modifiedAt: '2026-11-27T00:00:00.000Z', sha256: 'A'.repeat(64), kind: 'lua' }, { relativePath: 'lib/a.jar', sourcePath: 'C:\\a.jar', layerPath: 'C:\\mods\\a', bytes: 20, modifiedAt: '2026-11-27T00:00:00.000Z', sha256: 'B'.repeat(64), kind: 'java-archive' }],
-        totalFiles: 2, totalBytes: 30, contentDigest: 'C'.repeat(64), layerOverrides: [], skippedLinks: [], unreadable: [], jars: ['lib/a.jar'], classes: [], nativeBinaries: []
+        totalFiles: 2, totalBytes: 30, contentDigest: 'C'.repeat(64), layerOverrides: [], skippedLinks: [], unreadable: [], jars: ['lib/a.jar'], classes: [], nativeBinaries: [],
+        javaArchives: [{ relativePath: 'lib/a.jar', sourcePath: 'C:\\a.jar', archiveSha256: 'B'.repeat(64), completeness: 'complete', entries: 2, classes: 1, uncompressedBytes: 40, minimumClassMajor: 61, maximumClassMajor: 61, nativeMethods: 0, manifest: { mainClass: null, classPath: [], implementationVersion: null, multiRelease: false }, definedClasses: [{ name: 'fixture/A', entryPath: 'fixture/A.class', sha256: 'F'.repeat(64), majorVersion: 61, release: null, nativeMethods: 0 }], externalClasses: ['zombie/characters/IsoPlayer'], projectZomboidClasses: ['zombie/characters/IsoPlayer'], mixinFrameworks: [], mixinTargets: [], errors: [] }]
       }
     }),
     entry({ catalogId: 'a-copy', name: 'Core A duplicate', modId: 'Fixture.A' }),
@@ -37,10 +38,10 @@ test('MOD 中心投影保留依赖、重复 ID、文件类型和证据边界', (
   ]
   const catalog: ModCatalog = {
     schemaVersion: 1, generatedAt: '2026-11-27T00:00:00.000Z', source: 'Frozen', sourceLabel: 'Fixture', catalogPath: 'C:\\catalog.json',
-    game: { version: '42.21.0', revision: 'rev', buildId: 'build', jarSha256: 'D'.repeat(64), status: 'verified', source: 'binary', cachedVersion: '42.21.0', cachedRevision: 'rev', evidence: [] },
+    game: { version: '42.21.0', revision: 'rev', buildId: 'build', jarSha256: 'D'.repeat(64), status: 'verified', source: 'binary', cachedVersion: '42.21.0', cachedRevision: 'rev', evidence: [] }, javaRuntime: { releasePath: 'C:\\game\\jre64\\release', version: '17.0.1', major: 17, classMajor: 61, implementor: 'Fixture' },
     digestAlgorithm: 'SHA-256', catalogDigest: 'E'.repeat(64), completeness: 'complete',
-    summary: { discoveredMods: 3, resolvedMods: 3, unresolvedMods: 0, activeMods: 1, uniqueModIds: 2, workshopProjects: 0, duplicateModIds: 1, files: 2, bytes: 30, jars: 1, classes: 0, nativeBinaries: 0, unreadable: 0, skippedLinks: 0 },
-    indexes: { byModId: { 'Fixture.A': ['a', 'a-copy'], 'Fixture.B': ['b'] }, byWorkshopId: {}, requiredBy: { 'Fixture.A': ['b'], 'Missing.Mod': ['a'] } },
+    summary: { discoveredMods: 3, resolvedMods: 3, unresolvedMods: 0, activeMods: 1, uniqueModIds: 2, workshopProjects: 0, duplicateModIds: 1, files: 2, bytes: 30, jars: 1, classes: 0, nativeBinaries: 0, javaArchivesAnalyzed: 1, javaClasses: 1, javaArchiveErrors: 0, projectZomboidClassReferences: 1, mixinArchives: 0, duplicateJavaClasses: 0, unreadable: 0, skippedLinks: 0 },
+    indexes: { byModId: { 'Fixture.A': ['a', 'a-copy'], 'Fixture.B': ['b'] }, byWorkshopId: {}, requiredBy: { 'Fixture.A': ['b'], 'Missing.Mod': ['a'] }, javaClassOwners: { 'fixture/A': [{ catalogId: 'a', archivePath: 'lib/a.jar', sha256: 'F'.repeat(64), release: null, multiRelease: false }] } },
     methodology: ['fixture'], limitations: [], mods
   }
   const snapshot = buildModCenterSnapshot(catalog)
@@ -52,6 +53,7 @@ test('MOD 中心投影保留依赖、重复 ID、文件类型和证据边界', (
   assert.deepEqual(core.dependencies.requiredBy.map((mod) => mod.modId), ['Fixture.B'])
   assert.equal(core.content.kindCounts.lua, 1)
   assert.equal(core.content.kindCounts['java-archive'], 1)
+  assert.equal(core.content.javaArchives[0].projectZomboidReferences, 1)
   assert.equal(snapshot.summary.missingDependencies, 1)
   assert.equal(snapshot.summary.activeIncompatibilities, 1)
   assert.equal(snapshot.summary.modsWithBinaryCode, 1)

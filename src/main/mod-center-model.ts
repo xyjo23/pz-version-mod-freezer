@@ -1,4 +1,5 @@
 import type { CompatibilityContext, ModCatalog, ModCatalogFileKind, ModCenterSnapshot } from '../shared/types'
+import { selectEffectiveJavaClassOwners } from './java-archive-analysis'
 
 const fileKinds: ModCatalogFileKind[] = ['lua', 'pz-script', 'java-archive', 'jvm-bytecode', 'native-binary', 'xml', 'json', 'translation', 'map', 'asset', 'media', 'metadata', 'other']
 
@@ -18,7 +19,11 @@ export const buildModCenterSnapshot = (catalog: ModCatalog, activeContext: Compa
     const activeIncompatible = mod.active
       ? mod.dependencies.incompatible.filter((modId) => catalog.mods.some((candidate) => candidate.active && candidate.modId === modId))
       : []
-    const incompleteEvidence = Boolean(mod.metadata.readError || mod.content.unreadable.length || mod.content.skippedLinks.length)
+    const incompleteEvidence = Boolean(mod.metadata.readError || mod.content.unreadable.length || mod.content.skippedLinks.length || mod.content.javaArchives.some((archive) => archive.completeness === 'partial'))
+    const duplicateJavaClasses = [...new Set(mod.content.javaArchives.flatMap((archive) => archive.definedClasses.map((definition) => definition.name)))].filter((className) => {
+      const owners = selectEffectiveJavaClassOwners(catalog.indexes.javaClassOwners[className] ?? [], catalog.javaRuntime?.major ?? null)
+      return new Set(owners.map((owner) => owner.catalogId)).size > 1
+    }).length
     return {
       catalogId: mod.catalogId,
       name: mod.name,
@@ -39,7 +44,21 @@ export const buildModCenterSnapshot = (catalog: ModCatalog, activeContext: Compa
         skippedLinks: mod.content.skippedLinks.length,
         jars: mod.content.jars.length,
         classes: mod.content.classes.length,
-        nativeBinaries: mod.content.nativeBinaries.length
+        nativeBinaries: mod.content.nativeBinaries.length,
+        javaArchives: mod.content.javaArchives.map((archive) => ({
+          relativePath: archive.relativePath,
+          completeness: archive.completeness,
+          classes: archive.classes,
+          minimumClassMajor: archive.minimumClassMajor,
+          maximumClassMajor: archive.maximumClassMajor,
+          nativeMethods: archive.nativeMethods,
+          projectZomboidReferences: archive.projectZomboidClasses.length,
+          mixinFrameworks: [...archive.mixinFrameworks],
+          mixinTargets: archive.mixinTargets.slice(0, 40),
+          multiRelease: archive.manifest.multiRelease,
+          errors: [...archive.errors]
+        })),
+        duplicateJavaClasses
       },
       flags: {
         duplicateModId: Boolean(mod.modId && (catalog.indexes.byModId[mod.modId]?.length ?? 0) > 1),
@@ -59,6 +78,7 @@ export const buildModCenterSnapshot = (catalog: ModCatalog, activeContext: Compa
     catalogDigest: catalog.catalogDigest,
     completeness: catalog.completeness,
     game: catalog.game,
+    javaRuntime: catalog.javaRuntime,
     summary: {
       ...catalog.summary,
       missingDependencies: mods.reduce((sum, mod) => sum + mod.dependencies.missingRequired.length, 0),

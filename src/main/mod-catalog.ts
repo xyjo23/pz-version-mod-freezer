@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto'
 import { createReadStream, existsSync, promises as fs } from 'node:fs'
 import path from 'node:path'
 
-import type { GameIdentity, ModCatalog, ModCatalogEntry, ModCatalogFile, ModCatalogFileKind } from '../shared/types'
+import type { GameIdentity, JavaArchiveEvidence, ModCatalog, ModCatalogEntry, ModCatalogFile, ModCatalogFileKind } from '../shared/types'
+import { analyzeJavaArchive, readJavaRuntimeEvidence, selectEffectiveJavaClassOwners } from './java-archive-analysis'
 import type { ResolvedMod } from './mod-resolver'
 import { atomicWriteJsonIfChanged } from './safe-write'
 
@@ -11,6 +12,7 @@ type CatalogOptions = {
   sourceLabel: string
   catalogPath: string
   game: GameIdentity
+  gamePath?: string
   mods: ResolvedMod[]
 }
 
@@ -118,9 +120,10 @@ const mapIndex = (pairs: Array<[string | null, string]>): Record<string, string[
     .map(([key, values]) => [key, [...values].sort((left, right) => left.localeCompare(right, 'en'))]))
 }
 
-const logicalCatalogDigest = (game: GameIdentity, mods: ModCatalogEntry[], indexes: ModCatalog['indexes']): string => {
+const logicalCatalogDigest = (game: GameIdentity, javaRuntime: ModCatalog['javaRuntime'], mods: ModCatalogEntry[], indexes: ModCatalog['indexes']): string => {
   const logical = {
     game: { version: game.version, revision: game.revision, buildId: game.buildId, jarSha256: game.jarSha256 },
+    javaRuntime,
     mods: mods.map((mod) => ({
       catalogId: mod.catalogId,
       modId: mod.modId,
@@ -130,6 +133,17 @@ const logicalCatalogDigest = (game: GameIdentity, mods: ModCatalogEntry[], index
       dependencies: mod.dependencies,
       metadataSha256: mod.metadata.sha256,
       contentDigest: mod.content.contentDigest,
+      javaArchives: mod.content.javaArchives.map((archive) => ({
+        path: archive.relativePath,
+        sha256: archive.archiveSha256,
+        completeness: archive.completeness,
+        classes: archive.definedClasses.map((entry) => [entry.name, entry.sha256, entry.majorVersion, entry.release]),
+        externalClasses: archive.externalClasses,
+        projectZomboidClasses: archive.projectZomboidClasses,
+        mixinFrameworks: archive.mixinFrameworks,
+        mixinTargets: archive.mixinTargets,
+        errors: archive.errors
+      })),
       unreadable: mod.content.unreadable,
       skippedLinks: mod.content.skippedLinks
     })),
@@ -177,6 +191,32 @@ const buildEntry = async (mod: ResolvedMod, targetVersion: string): Promise<ModC
   }
   const contentDigest = createHash('sha256').update(JSON.stringify(files.map((file) => [file.relativePath.toLowerCase(), file.bytes, file.sha256])), 'utf8').digest('hex').toUpperCase()
   const totalBytes = files.reduce((sum, file) => sum + file.bytes, 0)
+  const javaArchives: JavaArchiveEvidence[] = []
+  for (const file of files.filter((candidate) => candidate.kind === 'java-archive')) {
+    try {
+      javaArchives.push(await analyzeJavaArchive(file.sourcePath, file.relativePath, file.sha256))
+    } catch (error) {
+      javaArchives.push({
+        relativePath: file.relativePath,
+        sourcePath: file.sourcePath,
+        archiveSha256: file.sha256,
+        completeness: 'partial',
+        entries: 0,
+        classes: 0,
+        uncompressedBytes: 0,
+        minimumClassMajor: null,
+        maximumClassMajor: null,
+        nativeMethods: 0,
+        manifest: { mainClass: null, classPath: [], implementationVersion: null, multiRelease: false },
+        definedClasses: [],
+        externalClasses: [],
+        projectZomboidClasses: [],
+        mixinFrameworks: [],
+        mixinTargets: [],
+        errors: [error instanceof Error ? error.message : String(error)]
+      })
+    }
+  }
   const evidence = [
     `目标游戏版本：${targetVersion}`,
     `生效层：${mod.layers.join(' + ') || '无可用层'}`,
@@ -185,7 +225,9 @@ const buildEntry = async (mod: ResolvedMod, targetVersion: string): Promise<ModC
     ...(mod.metadataError ? [`mod.info 读取异常：${mod.metadataError}`] : []),
     ...(mod.resolutionIssue ? [`版本目录解析：${mod.resolutionIssue}`] : []),
     ...(skippedLinks.length ? [`跳过目录联接/符号链接：${skippedLinks.length}`] : []),
-    ...(unreadable.length ? [`无法取得完整证据：${unreadable.length} 项`] : [])
+    ...(unreadable.length ? [`无法取得完整证据：${unreadable.length} 项`] : []),
+    ...(javaArchives.length ? [`JAR 内部静态解析：${javaArchives.reduce((sum, archive) => sum + archive.classes, 0)} 个 Class`] : []),
+    ...(javaArchives.some((archive) => archive.completeness === 'partial') ? ['至少一个 JAR 未能完整解析。'] : [])
   ]
   return {
     catalogId,
@@ -222,13 +264,15 @@ const buildEntry = async (mod: ResolvedMod, targetVersion: string): Promise<ModC
       unreadable: unreadable.sort((left, right) => left.path.localeCompare(right.path, 'en')),
       jars: files.filter((file) => file.kind === 'java-archive').map((file) => file.relativePath),
       classes: files.filter((file) => file.kind === 'jvm-bytecode').map((file) => file.relativePath),
-      nativeBinaries: files.filter((file) => file.kind === 'native-binary').map((file) => file.relativePath)
+      nativeBinaries: files.filter((file) => file.kind === 'native-binary').map((file) => file.relativePath),
+      javaArchives
     },
     evidence
   }
 }
 
 export const buildModCatalog = async (options: CatalogOptions): Promise<ModCatalog> => {
+  const javaRuntime = options.gamePath ? await readJavaRuntimeEvidence(options.gamePath) : null
   const mods: ModCatalogEntry[] = []
   for (const mod of [...options.mods].sort((left, right) => left.record.rootPath.localeCompare(right.record.rootPath, 'en'))) {
     mods.push(await buildEntry(mod, options.game.version))
@@ -236,10 +280,19 @@ export const buildModCatalog = async (options: CatalogOptions): Promise<ModCatal
   const byModId = mapIndex(mods.map((mod) => [mod.modId, mod.catalogId]))
   const byWorkshopId = mapIndex(mods.map((mod) => [mod.workshopId, mod.catalogId]))
   const requiredBy = mapIndex(mods.flatMap((mod) => mod.dependencies.require.map((required) => [required, mod.catalogId] as [string, string])))
-  const indexes = { byModId, byWorkshopId, requiredBy }
+  const javaClassOwnersMap = new Map<string, ModCatalog['indexes']['javaClassOwners'][string]>()
+  for (const mod of mods) for (const archive of mod.content.javaArchives) for (const definition of archive.definedClasses) {
+    const owners = javaClassOwnersMap.get(definition.name) ?? []
+    owners.push({ catalogId: mod.catalogId, archivePath: archive.relativePath, sha256: definition.sha256, release: definition.release, multiRelease: archive.manifest.multiRelease })
+    javaClassOwnersMap.set(definition.name, owners)
+  }
+  const javaClassOwners = Object.fromEntries([...javaClassOwnersMap.entries()].sort(([left], [right]) => left.localeCompare(right, 'en')))
+  const indexes = { byModId, byWorkshopId, requiredBy, javaClassOwners }
   const unreadable = mods.reduce((sum, mod) => sum + mod.content.unreadable.length + (mod.metadata.readError ? 1 : 0), 0)
   const skippedLinks = mods.reduce((sum, mod) => sum + mod.content.skippedLinks.length, 0)
   const unresolved = mods.filter((mod) => Boolean(mod.version.resolutionIssue) || !mod.modId).length
+  const javaArchiveErrors = mods.reduce((sum, mod) => sum + mod.content.javaArchives.reduce((archiveSum, archive) => archiveSum + archive.errors.length, 0), 0)
+  const duplicateJavaClasses = Object.values(javaClassOwners).filter((owners) => new Set(selectEffectiveJavaClassOwners(owners, javaRuntime?.major ?? null).map((owner) => owner.catalogId)).size > 1).length
   const catalog: ModCatalog = {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
@@ -247,9 +300,10 @@ export const buildModCatalog = async (options: CatalogOptions): Promise<ModCatal
     sourceLabel: options.sourceLabel,
     catalogPath: options.catalogPath,
     game: options.game,
+    javaRuntime,
     digestAlgorithm: 'SHA-256',
     catalogDigest: '',
-    completeness: unreadable || skippedLinks || unresolved ? 'partial' : 'complete',
+    completeness: unreadable || skippedLinks || unresolved || javaArchiveErrors ? 'partial' : 'complete',
     summary: {
       discoveredMods: mods.length,
       resolvedMods: mods.length - unresolved,
@@ -263,6 +317,12 @@ export const buildModCatalog = async (options: CatalogOptions): Promise<ModCatal
       jars: mods.reduce((sum, mod) => sum + mod.content.jars.length, 0),
       classes: mods.reduce((sum, mod) => sum + mod.content.classes.length, 0),
       nativeBinaries: mods.reduce((sum, mod) => sum + mod.content.nativeBinaries.length, 0),
+      javaArchivesAnalyzed: mods.reduce((sum, mod) => sum + mod.content.javaArchives.length, 0),
+      javaClasses: mods.reduce((sum, mod) => sum + mod.content.javaArchives.reduce((archiveSum, archive) => archiveSum + archive.classes, 0), 0),
+      javaArchiveErrors,
+      projectZomboidClassReferences: mods.reduce((sum, mod) => sum + mod.content.javaArchives.reduce((archiveSum, archive) => archiveSum + archive.projectZomboidClasses.length, 0), 0),
+      mixinArchives: mods.reduce((sum, mod) => sum + mod.content.javaArchives.filter((archive) => archive.mixinFrameworks.length > 0).length, 0),
+      duplicateJavaClasses,
       unreadable,
       skippedLinks
     },
@@ -271,18 +331,20 @@ export const buildModCatalog = async (options: CatalogOptions): Promise<ModCatal
       '按实际游戏 major.minor 规则选择 B42 common 与最高可用版本目录。',
       '后加载版本层覆盖 common 同路径文件；覆盖关系逐项保留。',
       '每个有效普通文件都在大小和修改时间稳定的窗口内计算 SHA-256。',
+      'JAR 采用受限 ZIP 流读取，解析 Class 常量池、类版本、native 方法、PZ API 引用和 Mixin 静态痕迹；不会加载任何类。',
       '目录联接和符号链接不被跟随，避免扫描逃出 MOD 根目录。'
     ],
     limitations: [
-      '本阶段记录 JAR、Class 和本地二进制文件及其哈希，但尚未解析 Java 字节码内部引用。',
-      '本阶段不执行 Lua、Java 或本地代码；动态加载关系需要后续静态规则或运行证据。',
+      'Class 常量池不能证明反射、动态生成、脚本桥接或运行时补丁一定会执行；相关结论保持为静态证据或待验证。',
+      '本阶段不执行 Lua、Java 或本地代码，也不判定代码来源是否可信。',
+      ...(javaArchiveErrors ? [`JAR 内部解析记录了 ${javaArchiveErrors} 个错误，因此数据库标记为 partial。`] : []),
       ...(unreadable ? [`${unreadable} 项内容无法完整读取，因此数据库标记为 partial。`] : []),
       ...(skippedLinks ? [`${skippedLinks} 个目录联接或符号链接被安全跳过，其目标内容不计入数据库。`] : []),
       ...(unresolved ? [`${unresolved} 个 MOD 缺少可用版本层或 Mod ID，不能视为完整解析。`] : [])
     ],
     mods
   }
-  catalog.catalogDigest = logicalCatalogDigest(options.game, mods, indexes)
+  catalog.catalogDigest = logicalCatalogDigest(options.game, javaRuntime, mods, indexes)
   return catalog
 }
 

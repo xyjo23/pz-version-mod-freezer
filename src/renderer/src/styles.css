@@ -956,6 +956,20 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .mod-detail-section { padding: 15px 0; border-bottom: 1px solid var(--border); }
 .mod-detail-section h3 { display: flex; align-items: center; gap: 7px; margin: 0 0 11px; font-size: 12px; }
 .mod-detail-section h3 svg { width: 15px; color: var(--lime); }
+.mod-java-list { display: flex; flex-direction: column; gap: 7px; }
+.mod-java-list article { padding: 10px; border: 1px solid rgba(106,196,238,.13); border-radius: 9px; background: rgba(106,196,238,.025); }
+.mod-java-list article.partial { border-color: rgba(232,177,89,.2); background: rgba(232,177,89,.035); }
+.mod-java-list header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.mod-java-list header code { min-width: 0; overflow-wrap: anywhere; color: #b9c8c0; font: 9px Consolas, monospace; }
+.mod-java-list header i { flex: none; color: #77c8ec; font-size: 8px; font-style: normal; }
+.mod-java-list article.partial header i { color: #e8b159; }
+.mod-java-list article > div { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.mod-java-list article > div span { padding: 5px 7px; border-radius: 6px; color: #87958d; background: rgba(255,255,255,.025); font-size: 8px; }
+.mod-java-list article > div b { color: #d3dfd8; }
+.mod-java-list p { margin: 7px 0 0; color: #829188; font-size: 8px; line-height: 1.5; }
+.mod-java-list p.danger { color: #ff9b92; }
+.mod-java-duplicate { display: flex; align-items: flex-start; gap: 7px; margin-top: 8px; color: #d9ae6c; font-size: 9px; line-height: 1.45; }
+.mod-java-duplicate svg { width: 14px; flex: none; }
 .mod-detail-section dl { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 6px; margin: 0; }
 .mod-detail-section dl div, .mod-content-facts div { min-width: 0; padding: 9px; border-radius: 8px; background: rgba(255,255,255,.022); }
 .mod-detail-section dt, .mod-content-facts span { color: #7f8c84; font-size: 8px; }

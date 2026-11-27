@@ -37,6 +37,7 @@ const main = async (): Promise<void> => {
     sourceLabel: config.DisplayName?.trim() || path.basename(freezeRoot),
     catalogPath: normalizedOutput,
     game: identity,
+    gamePath: config.GamePath,
     mods
   }))
   const metadataAfter = await fs.stat(metadataPath)

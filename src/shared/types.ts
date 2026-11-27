@@ -379,6 +379,56 @@ export type ModCatalogFile = {
   kind: ModCatalogFileKind
 }
 
+export type JavaClassEvidence = {
+  name: string
+  entryPath: string
+  sha256: string
+  majorVersion: number
+  release: number | null
+  nativeMethods: number
+}
+
+export type JavaRuntimeEvidence = {
+  releasePath: string
+  version: string
+  major: number
+  classMajor: number
+  implementor: string | null
+}
+
+export type JavaClassOwner = {
+  catalogId: string
+  archivePath: string
+  sha256: string
+  release: number | null
+  multiRelease: boolean
+}
+
+export type JavaArchiveEvidence = {
+  relativePath: string
+  sourcePath: string
+  archiveSha256: string
+  completeness: 'complete' | 'partial'
+  entries: number
+  classes: number
+  uncompressedBytes: number
+  minimumClassMajor: number | null
+  maximumClassMajor: number | null
+  nativeMethods: number
+  manifest: {
+    mainClass: string | null
+    classPath: string[]
+    implementationVersion: string | null
+    multiRelease: boolean
+  }
+  definedClasses: JavaClassEvidence[]
+  externalClasses: string[]
+  projectZomboidClasses: string[]
+  mixinFrameworks: string[]
+  mixinTargets: string[]
+  errors: string[]
+}
+
 export type ModCatalogEntry = {
   catalogId: string
   key: string
@@ -419,6 +469,7 @@ export type ModCatalogEntry = {
     jars: string[]
     classes: string[]
     nativeBinaries: string[]
+    javaArchives: JavaArchiveEvidence[]
   }
   evidence: string[]
 }
@@ -430,6 +481,7 @@ export type ModCatalog = {
   sourceLabel: string
   catalogPath: string
   game: GameIdentity
+  javaRuntime: JavaRuntimeEvidence | null
   digestAlgorithm: 'SHA-256'
   catalogDigest: string
   completeness: 'complete' | 'partial'
@@ -446,6 +498,12 @@ export type ModCatalog = {
     jars: number
     classes: number
     nativeBinaries: number
+    javaArchivesAnalyzed: number
+    javaClasses: number
+    javaArchiveErrors: number
+    projectZomboidClassReferences: number
+    mixinArchives: number
+    duplicateJavaClasses: number
     unreadable: number
     skippedLinks: number
   }
@@ -453,6 +511,7 @@ export type ModCatalog = {
     byModId: Record<string, string[]>
     byWorkshopId: Record<string, string[]>
     requiredBy: Record<string, string[]>
+    javaClassOwners: Record<string, JavaClassOwner[]>
   }
   methodology: string[]
   limitations: string[]
@@ -484,6 +543,20 @@ export type ModCenterEntry = {
     jars: number
     classes: number
     nativeBinaries: number
+    javaArchives: Array<{
+      relativePath: string
+      completeness: 'complete' | 'partial'
+      classes: number
+      minimumClassMajor: number | null
+      maximumClassMajor: number | null
+      nativeMethods: number
+      projectZomboidReferences: number
+      mixinFrameworks: string[]
+      mixinTargets: string[]
+      multiRelease: boolean
+      errors: string[]
+    }>
+    duplicateJavaClasses: number
   }
   flags: {
     duplicateModId: boolean
@@ -503,6 +576,7 @@ export type ModCenterSnapshot = {
   catalogDigest: string
   completeness: ModCatalog['completeness']
   game: GameIdentity
+  javaRuntime: JavaRuntimeEvidence | null
   summary: ModCatalog['summary'] & {
     missingDependencies: number
     activeIncompatibilities: number
@@ -656,6 +730,11 @@ export type CompatibilityReport = {
     jars: number
     classes: number
     nativeBinaries: number
+    javaArchivesAnalyzed: number
+    javaClasses: number
+    javaArchiveErrors: number
+    duplicateJavaClasses: number
+    javaRuntime: JavaRuntimeEvidence | null
   }
   identity: GameIdentity
   verdict: CompatibilitySeverity

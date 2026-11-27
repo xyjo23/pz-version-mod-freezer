@@ -17,6 +17,7 @@ import type {
 } from '../shared/types'
 import { readGameIdentity } from './game-identity'
 import { buildModCatalog, persistModCatalog } from './mod-catalog'
+import { selectEffectiveJavaClassOwners } from './java-archive-analysis'
 import { atomicWriteJsonIfChanged } from './safe-write'
 import { detectSteamInstallation } from './steam-service'
 import { collectLayerFiles, discoverLocalMods, discoverWorkshopMods, gameVersionKey, normalizeModId, type ResolvedMod } from './mod-resolver'
@@ -351,11 +352,12 @@ export const analyzeCompatibility = async (): Promise<CompatibilityReport> => {
     sourceLabel: source.label,
     catalogPath,
     game: source.identity,
+    gamePath: source.gamePath,
     mods
   }))
 
   if (modCatalog.completeness === 'partial') {
-    issues.push(issue('mod-catalog-partial', 'unknown', 'files', 'MOD 数据库证据不完整', `有 ${modCatalog.summary.unreadable} 项无法读取，另有 ${modCatalog.summary.skippedLinks} 个目录联接或符号链接被安全跳过。`, [modCatalog.catalogPath, ...modCatalog.mods.flatMap((mod) => mod.content.unreadable.slice(0, 3).map((entry) => `${entry.path}：${entry.error}`))], [], { confidence: 'unverified', impact: '缺少的文件不参与依赖类型和内容指纹统计，不能把数据库解释为完整覆盖。', action: '关闭正在更新这些 MOD 的程序、修复读取权限，并重新运行兼容性分析。', rule: 'MOD-CATALOG-COMPLETE' }))
+    issues.push(issue('mod-catalog-partial', 'unknown', 'files', 'MOD 数据库证据不完整', `有 ${modCatalog.summary.unreadable} 项无法读取、${modCatalog.summary.skippedLinks} 个目录链接被跳过，JAR 内部解析记录 ${modCatalog.summary.javaArchiveErrors} 个错误。`, [modCatalog.catalogPath, ...modCatalog.mods.flatMap((mod) => [...mod.content.unreadable.slice(0, 3).map((entry) => `${entry.path}：${entry.error}`), ...mod.content.javaArchives.flatMap((archive) => archive.errors.slice(0, 3).map((entry) => `${archive.sourcePath}：${entry}`))])], [], { confidence: 'unverified', impact: '缺少的文件或类证据不参与依赖类型和内容指纹统计，不能把数据库解释为完整覆盖。', action: '关闭正在更新这些 MOD 的程序、修复读取权限或异常 JAR，并重新运行兼容性分析。', rule: 'MOD-CATALOG-COMPLETE' }))
   } else {
     issues.push(issue('mod-catalog-complete', 'pass', 'files', 'MOD 数据库已完整重建', `${modCatalog.summary.discoveredMods} 个 MOD、${modCatalog.summary.files} 个有效文件均已建立 SHA-256 证据。`, [modCatalog.catalogPath, `数据库摘要：${modCatalog.catalogDigest}`], [], { rule: 'MOD-CATALOG-COMPLETE' }))
   }
@@ -483,7 +485,34 @@ export const analyzeCompatibility = async (): Promise<CompatibilityReport> => {
   if (files.identicalOverlapCount) issues.push(issue('identical-overlaps', 'pass', 'files', '同路径但内容完全相同的文件已排除风险', `${files.identicalOverlapCount} 个重叠路径的 SHA-256 完全一致，没有作为冲突报告。`, [], [], { confidence: 'confirmed', rule: 'FILE-OVERLAP-HASH-EQUALITY' }))
   if (files.semanticSafeTranslationCount) issues.push(issue('translation-keys-disjoint', 'pass', 'files', '翻译容器的键互不冲突', `${files.semanticSafeTranslationCount} 个同路径翻译文件虽然字节不同，但解析后没有发现同键不同值。`, [], [], { confidence: 'confirmed', rule: 'FILE-TRANSLATION-KEYS-DISJOINT' }))
   if (files.baseOverrideCount) issues.push(issue('base-overrides', 'unknown', 'files', '检测到 MOD 使用了原版已有路径', `${files.baseOverrideCount} 个有效路径同时存在于游戏目录；这只是覆盖事实，不足以证明不兼容。`, [source.gamePath], [], { confidence: 'confirmed', impact: '可能是有意修改原版资源，也可能在游戏更新后需要适配。', action: '结合具体路径、MOD 说明和实际运行日志判断；不要仅凭数量删除 MOD。', rule: 'BASE-PATH-OVERRIDE' }))
-  if (files.binaryModIds.length) issues.push(issue('binary-mods', 'unknown', 'security', '检测到 Java 或本地二进制扩展', '这类扩展可以直接影响游戏代码，静态文件扫描不能证明其安全性或兼容性。', files.binaryModIds, files.binaryModIds, { confidence: 'unverified', impact: '它们可能随游戏 revision 变化而失效，也具备普通 Lua MOD 之外的系统权限风险。', action: '只使用可信来源、优先选择可复现或开源构建，并在每次游戏更新后单独验证。', rule: 'BINARY-MOD-MANUAL-TRUST' }))
+  const scopedCatalogMods = hasSelectedContext ? modCatalog.mods.filter((mod) => mod.active) : modCatalog.mods
+  const scopedCatalogIds = new Set(scopedCatalogMods.map((mod) => mod.catalogId))
+  const catalogById = new Map(modCatalog.mods.map((mod) => [mod.catalogId, mod]))
+  const javaArchives = scopedCatalogMods.flatMap((mod) => mod.content.javaArchives.map((archive) => ({ mod, archive })))
+  const divergentClasses = Object.entries(modCatalog.indexes.javaClassOwners).flatMap(([className, owners]) => {
+    const scopedOwners = selectEffectiveJavaClassOwners(owners.filter((owner) => scopedCatalogIds.has(owner.catalogId)), modCatalog.javaRuntime?.major ?? null)
+    return new Set(scopedOwners.map((owner) => owner.catalogId)).size > 1 && new Set(scopedOwners.map((owner) => owner.sha256)).size > 1 ? [{ className, owners: scopedOwners }] : []
+  })
+  const identicalSharedClasses = Object.values(modCatalog.indexes.javaClassOwners).filter((owners) => {
+    const scopedOwners = selectEffectiveJavaClassOwners(owners.filter((owner) => scopedCatalogIds.has(owner.catalogId)), modCatalog.javaRuntime?.major ?? null)
+    return new Set(scopedOwners.map((owner) => owner.catalogId)).size > 1 && new Set(scopedOwners.map((owner) => owner.sha256)).size === 1
+  }).length
+  if (divergentClasses.length) {
+    const examples = divergentClasses.slice(0, 20)
+    issues.push(issue('java-class-divergence', 'warning', 'security', `${divergentClasses.length} 个 Java 类由多个启用 MOD 提供且内容不同`, '已确认当前 Java 运行时会选择的同名 Class SHA-256 不同；最终行为取决于类加载器顺序，不能仅凭重复断言哪个 MOD 有错。', examples.flatMap(({ className, owners }) => [className, ...owners.map((owner) => `${catalogById.get(owner.catalogId)?.modId ?? catalogById.get(owner.catalogId)?.name ?? owner.catalogId} · ${owner.archivePath} · ${owner.sha256}`)]), unique(examples.flatMap(({ owners }) => owners.flatMap((owner) => catalogById.get(owner.catalogId)?.modId ? [catalogById.get(owner.catalogId)!.modId!] : []))), { confidence: 'confirmed', impact: '如果这些 JAR 同时进入同一类加载器，先被加载的实现可能遮蔽另一个版本。', action: '核对列出的类属于有意捆绑的相同依赖，还是两个 MOD 的不同补丁；不要仅凭数量删除 MOD。', rule: 'JAVA-CLASS-OWNER-UNIQUE' }))
+  }
+  if (identicalSharedClasses) issues.push(issue('java-class-identical', 'pass', 'security', '跨 MOD 重复 Java 类内容一致', `${identicalSharedClasses} 个类虽然由多个 MOD 提供，但逐类 SHA-256 完全相同。`, [], [], { confidence: 'confirmed', rule: 'JAVA-CLASS-HASH-EQUALITY' }))
+  const mixinArchives = javaArchives.filter(({ archive }) => archive.mixinFrameworks.length)
+  if (mixinArchives.length) issues.push(issue('java-mixin-detected', 'unknown', 'security', '检测到 Java Mixin 静态痕迹', `${mixinArchives.length} 个 JAR 引用了 Mixin 框架；这说明它们可能修改游戏类，但不证明补丁一定执行或互相冲突。`, mixinArchives.flatMap(({ mod, archive }) => [`${mod.modId ?? mod.name} · ${archive.relativePath} · ${archive.mixinFrameworks.join('、')}`, ...archive.mixinTargets.slice(0, 8)]), unique(mixinArchives.flatMap(({ mod }) => mod.modId ? [mod.modId] : [])), { confidence: 'inferred', impact: 'Mixin 目标随游戏 revision 变化时可能失效；多个补丁命中同一目标时需要运行日志确认。', action: '游戏更新后核对启动日志中的 Mixin/类加载错误，并优先使用作者声明支持当前 Build 的版本。', rule: 'JAVA-MIXIN-STATIC-EVIDENCE' }))
+  const nativeMethodArchives = javaArchives.filter(({ archive }) => archive.nativeMethods > 0)
+  if (nativeMethodArchives.length) issues.push(issue('java-native-methods', 'unknown', 'security', 'JAR 声明了 native 方法', `${nativeMethodArchives.reduce((sum, entry) => sum + entry.archive.nativeMethods, 0)} 个方法需要 JVM 之外的本地实现；静态 Class 解析无法验证其运行环境。`, nativeMethodArchives.map(({ mod, archive }) => `${mod.modId ?? mod.name} · ${archive.relativePath} · ${archive.nativeMethods} 个 native 方法`), unique(nativeMethodArchives.flatMap(({ mod }) => mod.modId ? [mod.modId] : [])), { confidence: 'confirmed', impact: '缺少对应本地库或架构不匹配时可能在运行时失败。', action: '核对 MOD 是否同时提供当前系统所需的本地库，并通过实际启动日志验证。', rule: 'JAVA-NATIVE-METHOD' }))
+  const unsupportedClasses = modCatalog.javaRuntime ? javaArchives.flatMap(({ mod, archive }) => archive.definedClasses.filter((definition) => {
+    if (definition.release !== null && (!archive.manifest.multiRelease || definition.release > modCatalog.javaRuntime!.major)) return false
+    return definition.majorVersion > modCatalog.javaRuntime!.classMajor
+  }).map((definition) => ({ mod, archive, definition }))) : []
+  if (unsupportedClasses.length) issues.push(issue('java-class-version-unsupported', 'warning', 'security', `${unsupportedClasses.length} 个可能生效的 Class 高于游戏 Java 版本`, `游戏自带 Java ${modCatalog.javaRuntime!.version}（最高 Class ${modCatalog.javaRuntime!.classMajor}），这些条目使用了更高版本。`, unsupportedClasses.slice(0, 30).map(({ mod, archive, definition }) => `${mod.modId ?? mod.name} · ${archive.relativePath} · ${definition.entryPath} · Class ${definition.majorVersion}`), unique(unsupportedClasses.flatMap(({ mod }) => mod.modId ? [mod.modId] : [])), { confidence: 'confirmed', impact: '如果游戏加载这些类，JVM 会拒绝其 Class 版本；仅位于未生效多版本目录的类已排除。', action: '安装面向游戏内置 Java 版本编译的 MOD，或向作者确认兼容构建。', rule: 'JAVA-CLASS-VERSION' }))
+  if (javaArchives.length && !javaArchives.some(({ archive }) => archive.completeness === 'partial')) issues.push(issue('java-archives-parsed', 'pass', 'security', 'JAR 内部静态证据已完整建立', `${javaArchives.length} 个 JAR 共解析 ${javaArchives.reduce((sum, entry) => sum + entry.archive.classes, 0)} 个 Class、${javaArchives.reduce((sum, entry) => sum + entry.archive.projectZomboidClasses.length, 0)} 个 PZ API 类引用。`, javaArchives.flatMap(({ mod, archive }) => [`${mod.modId ?? mod.name} · Class ${archive.classes} · Java major ${archive.minimumClassMajor ?? '?'}～${archive.maximumClassMajor ?? '?'}`]), [], { confidence: 'confirmed', rule: 'JAVA-ARCHIVE-STATIC-COVERAGE' }))
+  if (files.binaryModIds.length) issues.push(issue('binary-mods', 'unknown', 'security', '检测到 Java 或本地二进制扩展', '已建立文件哈希和可读取 JAR 的内部静态证据，但静态分析仍不能证明代码来源可信或运行时兼容。', files.binaryModIds, files.binaryModIds, { confidence: 'unverified', impact: '它们可能随游戏 revision 变化而失效，也具备普通 Lua MOD 之外的系统权限风险。', action: '只使用可信来源、优先选择可复现或开源构建，并在每次游戏更新后核对实际启动日志。', rule: 'BINARY-MOD-MANUAL-TRUST' }))
   const contentCoverageComplete = !selectedContext || (selectedContext.missingModIds.length === 0 && selectedContext.missingWorkshopIds.length === 0)
   if (!issues.some((entry) => entry.appliesToScope && entry.category === 'dependency' && entry.severity === 'blocker')) {
     issues.push(contentCoverageComplete
@@ -527,7 +556,12 @@ export const analyzeCompatibility = async (): Promise<CompatibilityReport> => {
       files: modCatalog.summary.files,
       jars: modCatalog.summary.jars,
       classes: modCatalog.summary.classes,
-      nativeBinaries: modCatalog.summary.nativeBinaries
+      nativeBinaries: modCatalog.summary.nativeBinaries,
+      javaArchivesAnalyzed: modCatalog.summary.javaArchivesAnalyzed,
+      javaClasses: modCatalog.summary.javaClasses,
+      javaArchiveErrors: modCatalog.summary.javaArchiveErrors,
+      duplicateJavaClasses: modCatalog.summary.duplicateJavaClasses,
+      javaRuntime: modCatalog.javaRuntime
     },
     identity: source.identity,
     verdict,
@@ -535,13 +569,14 @@ export const analyzeCompatibility = async (): Promise<CompatibilityReport> => {
       '从游戏二进制读取实际版本身份，并按 major.minor 选择 B42 MOD 版本目录。',
       '解析 mod.info 的 Mod ID、版本范围、require、incompatible、loadAfter 和 loadBefore。',
       '重建统一 MOD 数据库，对所有实际生效普通文件计算 SHA-256，并单独登记 JAR、Class 与本地二进制。',
+      '受限读取 JAR 与 Class 常量池，登记类版本、PZ API 引用、Mixin 痕迹、native 方法和跨 MOD 同名类哈希。',
       '只对当前分析范围内的 MOD 建立依赖图和加载顺序。',
       '对同路径文件计算 SHA-256；内容完全相同的重叠不会作为风险报告。'
     ],
     limitations: [
       selectedContext ? `本报告的主要结论只适用于“${scopeLabel}”。` : '没有唯一启用上下文，因此依赖和覆盖分析只能描述已安装内容，不能代表某个实际存档或服务器。',
       ...(selectedContext?.missingModIds.length ? [`${selectedContext.missingModIds.length} 个缺失 Mod ID 没有文件可供解析；它们的依赖、互斥、tiledef 和文件覆盖不在已完成扫描内。`] : []),
-      '静态分析不能执行 Lua、Java 或本地二进制代码，也不能证明所有运行时行为兼容。',
+      '静态分析不会执行 Lua、Java 或本地二进制代码；反射、动态类生成、类加载器先后和 Mixin 实际应用仍需运行日志验证。',
       '“同路径且内容不同”是覆盖事实，不等于已经证明发生功能冲突。'
     ],
     summary: {

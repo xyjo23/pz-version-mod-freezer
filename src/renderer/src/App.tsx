@@ -146,6 +146,7 @@ const helpTutorials: HelpTutorial[] = [
       { title: '运行分析', intro: '分析器按游戏实际目录规则选择 MOD 版本，不会只看 Workshop 标题。', steps: [
         { title: '先查看 MOD 中心', detail: '搜索 Mod ID，核对 B42 生效层、依赖、被依赖关系、文件类型和内容摘要。浏览与重建数据库都是只读操作，不会执行 MOD。' },
         { title: '按需规划启用清单', detail: '选择一个明确的存档或服务器，编辑目标 Mod ID 后先生成安全预览。只有阻断项为零并再次确认，才会备份并原子更新该上下文；不会删除或改写 MOD 文件。' },
+        { title: '检查代码型 MOD', detail: '带 JAR 的 MOD 会显示 Class 数量、Java 字节码范围、PZ API 引用、Mixin/native 痕迹和跨 MOD 同名类证据。静态证据不会执行代码，也不能替代实际启动日志。' },
         { title: '进入完整性与兼容性', detail: '先确认页面对应当前版本，再点击“开始兼容性分析”，查看整个启用组合的结论。' },
         { title: '理解身份关系', detail: 'Workshop ID 是发布项目，Mod ID 是游戏加载身份；同一 Workshop 可包含多个 Mod ID 和版本变体。' }
       ] },
@@ -204,6 +205,15 @@ const formatBytes = (value?: number): string => {
   if (!value) return '—'
   if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(2)} GiB`
   return `${(value / 1024 ** 2).toFixed(1)} MiB`
+}
+const javaMajorLabel = (major: number | null): string => {
+  if (major === null) return '无 Class'
+  const java = major >= 45 ? major - 44 : null
+  return java ? `Java ${java}（Class ${major}）` : `Class ${major}`
+}
+const javaRangeLabel = (minimum: number | null, maximum: number | null, multiRelease: boolean): string => {
+  const range = minimum !== null && maximum !== null && minimum !== maximum ? `${javaMajorLabel(minimum)} ～ ${javaMajorLabel(maximum)}` : javaMajorLabel(maximum)
+  return multiRelease ? `${range} · 多版本 JAR` : range
 }
 const compactPath = (value?: string | null): string => value || '尚未配置'
 const VERSION_NAME_LIMIT = 24
@@ -673,6 +683,7 @@ const ModCenterWorkspace = ({ onOpenCompatibility }: { onOpenCompatibility: () =
           {(hasModCenterIssue(selected) || selected.flags.hasBinaryCode) && <div className="mod-detail-alerts">{selected.dependencies.missingRequired.length > 0 && <div className="danger"><ShieldAlert /><span><b>缺少必需依赖</b><small>{selected.dependencies.missingRequired.join('、')}</small></span></div>}{selected.dependencies.activeIncompatible.length > 0 && <div className="danger"><ShieldAlert /><span><b>声明的互斥 MOD 当前同时启用</b><small>{selected.dependencies.activeIncompatible.join('、')}</small></span></div>}{selected.flags.duplicateModId && <div className="danger"><CircleAlert /><span><b>Mod ID 存在重复来源</b><small>兼容性报告会列出所有实际目录。</small></span></div>}{selected.flags.unresolved && <div><CircleAlert /><span><b>B42 版本层未完整解析</b><small>{selected.version.resolutionIssue ?? '没有可用 Mod ID。'}</small></span></div>}{selected.flags.incompleteEvidence && <div><CircleAlert /><span><b>内容证据不完整</b><small>{selected.content.unreadable} 项不可读，{selected.content.skippedLinks} 个目录链接被跳过。</small></span></div>}{selected.flags.hasBinaryCode && <div className="code"><FileCode2 /><span><b>包含可执行代码证据</b><small>JAR {selected.content.jars} · Class {selected.content.classes} · 本地二进制 {selected.content.nativeBinaries}；这里只登记，不执行。</small></span></div>}</div>}
           <section className="mod-detail-section"><h3>B42 版本解析</h3><dl><div><dt>目标游戏</dt><dd>{selected.version.target}</dd></div><div><dt>选中变体</dt><dd>{selected.version.selected ?? '未解析'}</dd></div><div><dt>可见变体</dt><dd>{selected.version.variants.join('、') || '仅 common'}</dd></div><div><dt>生效层</dt><dd>{selected.version.layers.length}</dd></div></dl><div className="mod-layer-list">{selected.version.layers.map((layer, index) => <span key={layer}><i>{index + 1}</i><code>{layer}</code></span>)}</div></section>
           <section className="mod-detail-section"><h3><GitBranch />依赖与顺序</h3><div className="mod-relations"><div><span>必需依赖</span><p>{selected.dependencies.require.join('、') || '无'}</p></div><div><span>依赖此 MOD</span><p>{selected.dependencies.requiredBy.map((mod) => mod.modId ?? mod.name).join('、') || '无'}</p></div><div><span>互斥项</span><p>{selected.dependencies.incompatible.join('、') || '无'}{selected.dependencies.activeIncompatible.length ? `（当前同时启用：${selected.dependencies.activeIncompatible.join('、')}）` : ''}</p></div><div><span>应后加载</span><p>{selected.dependencies.loadAfter.join('、') || '无'}</p></div><div><span>应前加载</span><p>{selected.dependencies.loadBefore.join('、') || '无'}</p></div></div></section>
+          {selected.content.javaArchives.length > 0 && <section className="mod-detail-section"><h3><FileCode2 />Java / JAR 静态证据</h3><div className="mod-java-list">{selected.content.javaArchives.map((archive) => <article className={archive.completeness === 'partial' ? 'partial' : ''} key={archive.relativePath}><header><code>{archive.relativePath}</code><i>{archive.completeness === 'complete' ? '已完整解析' : '证据不完整'}</i></header><div><span><b>{archive.classes}</b> Class</span><span>{javaRangeLabel(archive.minimumClassMajor, archive.maximumClassMajor, archive.multiRelease)}</span><span><b>{archive.projectZomboidReferences}</b> 个 PZ API 引用</span><span><b>{archive.nativeMethods}</b> 个 native 方法</span></div>{archive.mixinFrameworks.length > 0 && <p>Mixin：{archive.mixinFrameworks.join('、')} · 静态目标 {archive.mixinTargets.length} 个</p>}{archive.errors.length > 0 && <p className="danger">{archive.errors.join('；')}</p>}</article>)}</div>{selected.content.duplicateJavaClasses > 0 && <div className="mod-java-duplicate"><CircleAlert />此 MOD 有 {selected.content.duplicateJavaClasses} 个类名也由其他 MOD 提供，详细哈希证据见兼容性报告。</div>}</section>}
           <section className="mod-detail-section"><h3>有效文件</h3><div className="mod-content-facts"><div><span>文件</span><b>{selected.content.totalFiles}</b></div><div><span>大小</span><b>{formatBytes(selected.content.totalBytes)}</b></div><div><span>层覆盖</span><b>{selected.content.layerOverrides}</b></div></div><div className="mod-kind-grid">{activeKinds.map(([kind, count]) => <span key={kind}><b>{count}</b>{modKindLabels[kind] ?? kind}</span>)}</div></section>
           <section className="mod-detail-section technical"><h3>技术证据</h3><div><span>内容 SHA-256</span><code>{selected.content.contentDigest}</code></div><div><span>实际目录</span><code>{selected.rootPath}</code></div><button className="secondary-button" onClick={() => void window.vault.openPath(selected.rootPath)}><FolderOpen />打开 MOD 目录</button></section>
         </> : <div className="mod-center-no-selection"><Database /><b>选择一个 MOD</b><span>这里会显示版本层、依赖和文件证据。</span></div>}</aside>
