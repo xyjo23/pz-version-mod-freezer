@@ -72,7 +72,7 @@ const main = async (): Promise<void> => {
   await createMod(modsRoot, 'MissingDependency', 'name=Missing dependency\nid=Mod.NeedsMissing\nrequire=Mod.NotInstalled')
   const overlapFilesOne = {
     [path.join('media', 'lua', 'shared', 'collision.lua')]: 'return "one"',
-    [path.join('media', 'scripts', 'items.txt')]: 'module One {}',
+    [path.join('media', 'scripts', 'items.txt')]: 'module Base { item Shared { Type = One, } }',
     [path.join('media', 'lua', 'shared', 'Translate', 'EN', 'shared.txt')]: 'Shared = Same',
     [path.join('media', 'lua', 'shared', 'Translate', 'EN', 'different.txt')]: 'Label = One',
     [path.join('media', 'lua', 'shared', 'Translate', 'EN', 'disjoint.json')]: '{"OnlyOne":"One"}',
@@ -80,7 +80,7 @@ const main = async (): Promise<void> => {
   }
   const overlapFilesTwo = {
     [path.join('media', 'lua', 'shared', 'collision.lua')]: 'return "two"',
-    [path.join('media', 'scripts', 'items.txt')]: 'module Two {}',
+    [path.join('media', 'scripts', 'items.txt')]: 'module Base { item Shared { Type = Two, } }',
     [path.join('media', 'lua', 'shared', 'Translate', 'EN', 'shared.txt')]: 'Shared = Same',
     [path.join('media', 'lua', 'shared', 'Translate', 'EN', 'different.txt')]: 'Label = Two',
     [path.join('media', 'lua', 'shared', 'Translate', 'EN', 'disjoint.json')]: '{"OnlyTwo":"Two"}',

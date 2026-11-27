@@ -19,6 +19,7 @@ import { readGameIdentity } from './game-identity'
 import { buildModCatalog, persistModCatalog } from './mod-catalog'
 import { selectEffectiveJavaClassOwners } from './java-archive-analysis'
 import { analyzeLuaSemantics } from './lua-analysis'
+import { analyzeScriptSemantics } from './script-analysis'
 import { atomicWriteJsonIfChanged } from './safe-write'
 import { detectSteamInstallation } from './steam-service'
 import { collectLayerFiles, discoverLocalMods, discoverWorkshopMods, gameVersionKey, normalizeModId, type ResolvedMod } from './mod-resolver'
@@ -244,7 +245,7 @@ const hashFile = (filePath: string): Promise<string> => new Promise((resolve, re
 const analyzeFiles = async (
   mods: ResolvedMod[],
   gamePath: string
-): Promise<{ overlaps: FileOverlap[]; overlapCount: number; identicalOverlapCount: number; semanticSafeTranslationCount: number; classificationSeverityCounts: Map<FileOverlapClassification, Map<CompatibilitySeverity, number>>; baseOverrideCount: number; binaryModIds: string[] }> => {
+): Promise<{ overlaps: FileOverlap[]; overlapCount: number; identicalOverlapCount: number; semanticSafeTranslationCount: number; semanticSafeScriptCount: number; classificationSeverityCounts: Map<FileOverlapClassification, Map<CompatibilitySeverity, number>>; baseOverrideCount: number; binaryModIds: string[] }> => {
   const owners = new Map<string, { displayPath: string; modIds: Set<string>; files: string[]; entries: Array<{ modId: string; filePath: string }> }>()
   const baseOverrides = new Set<string>()
   const binaryModIds = new Set<string>()
@@ -282,6 +283,9 @@ const analyzeFiles = async (
       const luaSemantic = classification === 'lua' && contentIdentical !== true
         ? await analyzeLuaSemantics(owner.entries)
         : null
+      const scriptSemantic = classification === 'scripts' && contentIdentical !== true
+        ? await analyzeScriptSemantics(owner.entries)
+        : null
       const severity: CompatibilitySeverity = contentIdentical === true
         ? 'pass'
         : translationSemantic?.status === 'keys-disjoint'
@@ -290,7 +294,13 @@ const analyzeFiles = async (
             ? 'warning'
             : luaSemantic?.status === 'lua-symbol-conflict'
               ? 'warning'
-            : overlapSeverity(classification)
+              : scriptSemantic?.status === 'script-definition-conflict'
+                ? 'warning'
+                : scriptSemantic?.status === 'script-definitions-identical' || scriptSemantic?.status === 'script-definitions-disjoint'
+                  ? 'pass'
+                  : scriptSemantic?.status === 'script-unparsed'
+                    ? 'unknown'
+                    : overlapSeverity(classification)
       return {
         relativePath: owner.displayPath,
         classification,
@@ -298,8 +308,8 @@ const analyzeFiles = async (
         modIds: [...owner.modIds].sort((left, right) => left.localeCompare(right, 'en')),
         overridesBaseGame: baseOverrides.has(owner.displayPath.toLowerCase()),
         contentIdentical,
-        semanticStatus: translationSemantic?.status ?? luaSemantic?.status,
-        semanticEvidence: translationSemantic?.evidence ?? luaSemantic?.evidence
+        semanticStatus: translationSemantic?.status ?? luaSemantic?.status ?? scriptSemantic?.status,
+        semanticEvidence: translationSemantic?.evidence ?? luaSemantic?.evidence ?? scriptSemantic?.evidence
       }
     })))
   }
@@ -315,6 +325,7 @@ const analyzeFiles = async (
     overlapCount: allOverlaps.length,
     identicalOverlapCount: allOverlaps.filter((entry) => entry.contentIdentical === true).length,
     semanticSafeTranslationCount: allOverlaps.filter((entry) => entry.semanticStatus === 'keys-disjoint').length,
+    semanticSafeScriptCount: allOverlaps.filter((entry) => entry.semanticStatus === 'script-definitions-identical' || entry.semanticStatus === 'script-definitions-disjoint').length,
     classificationSeverityCounts,
     baseOverrideCount: baseOverrides.size,
     binaryModIds: [...binaryModIds]
@@ -491,10 +502,16 @@ export const analyzeCompatibility = async (): Promise<CompatibilityReport> => {
     const translationUnparsed = classification === 'translation' && severity === 'unknown'
     const luaConflict = classification === 'lua' && severity === 'warning'
     const luaUnparsed = classification === 'lua' && examples.some((overlap) => overlap.semanticStatus === 'lua-unparsed')
+    const scriptConflict = classification === 'scripts' && severity === 'warning'
+    const scriptUnparsed = classification === 'scripts' && examples.some((overlap) => overlap.semanticStatus === 'script-unparsed')
     const title = luaConflict
       ? `${count} 个 Lua 路径存在同名写入或注册差异`
       : classification === 'lua'
         ? `${count} 个 Lua 同路径组合仍需运行验证`
+        : scriptConflict
+          ? `${count} 个脚本路径重复定义了同一游戏实体`
+          : scriptUnparsed
+            ? `${count} 个游戏脚本路径未能完整解析`
         : `${count} 个 ${classification} 路径需要进一步处理`
     const summary = luaConflict
       ? '静态解析确认：多个 MOD 会写入同一全局符号，或用不同内容注册同一个键。'
@@ -502,15 +519,20 @@ export const analyzeCompatibility = async (): Promise<CompatibilityReport> => {
         ? '至少一个 Lua 文件没有被完整读取或分词，因此没有推断脚本冲突。'
         : classification === 'lua'
           ? '已解析 require、事件挂接、全局写入和注册项；未把“相同文件名”直接判成冲突。仍有动态调用或重复注册需要实际启动验证。'
+          : scriptConflict
+            ? '已确认多个 MOD 在相同脚本路径中定义了同一个 module + 实体名，而且定义内容不同。'
+            : scriptUnparsed
+              ? '至少一个 Project Zomboid 脚本没有被完整读取或解析，因此没有推断实体冲突。'
           : translationUnparsed
             ? '至少一个文件无法解析为支持的翻译键值格式，因此没有推断键冲突。'
             : classification === 'translation'
               ? '已解析翻译键，并确认存在同键不同值。'
               : '已确认路径相同且文件哈希不同；静态扫描不能仅凭这一事实断言运行时一定冲突。'
-    issues.push(issue(`overlaps-${classification}-${severity}`, severity, classification === 'binary' ? 'security' : 'files', title, summary, examples.flatMap((overlap) => [`${overlap.relativePath} ← ${overlap.modIds.join(', ')}`, ...(overlap.semanticEvidence ?? [])]), unique(examples.flatMap((overlap) => overlap.modIds)), { confidence: classification === 'translation' ? severity === 'warning' ? 'confirmed' : 'unverified' : luaConflict ? 'confirmed' : classification === 'lua' ? 'inferred' : 'inferred', impact: classification === 'asset' ? '加载顺序会决定最终显示的资源，可能只是外观覆盖。' : luaConflict ? '同名全局写入可能互相替换；同一注册键的不同定义可能让最终行为受加载顺序影响。' : classification === 'lua' ? 'Project Zomboid 会分别加载多个 MOD 的 Lua；同路径本身不是证据，真正影响取决于运行时执行分支和注册表如何处理重复项。' : translationUnparsed ? '当前证据不足以判断这些翻译容器是否包含同键不同值。' : classification === 'translation' ? '相同翻译键被赋予不同文字，最终显示内容可能受加载顺序影响。' : '后加载内容可能替代先加载内容，是否有害取决于文件语义。', action: luaConflict ? '先核对列出的符号或注册键是否是有意补丁，再按作者要求调整加载顺序；若作者未说明，复制存档后实际启动并检查 console.txt。' : classification === 'lua' ? '保留当前组合做一次主菜单和测试存档启动；若异常，只围绕列出的 MOD、注册键与 console.txt 排查，不要仅因文件同名删除 MOD。' : translationUnparsed ? '检查文件编码和语法，或手工比较其中的翻译键。' : classification === 'translation' ? '核对列出的冲突键和 MOD 预期；如果是翻译补丁，应让补丁在原 MOD 之后加载。' : '先查看示例路径和涉及 MOD；只有出现运行症状或作者明确说明时才判定为真实冲突。', rule: `FILE-OVERLAP-${classification.toUpperCase()}` }))
+    issues.push(issue(`overlaps-${classification}-${severity}`, severity, classification === 'binary' ? 'security' : 'files', title, summary, examples.flatMap((overlap) => [`${overlap.relativePath} ← ${overlap.modIds.join(', ')}`, ...(overlap.semanticEvidence ?? [])]), unique(examples.flatMap((overlap) => overlap.modIds)), { confidence: classification === 'translation' ? severity === 'warning' ? 'confirmed' : 'unverified' : luaConflict || scriptConflict ? 'confirmed' : 'inferred', impact: classification === 'asset' ? '加载顺序会决定最终显示的资源，可能只是外观覆盖。' : luaConflict ? '同名全局写入可能互相替换；同一注册键的不同定义可能让最终行为受加载顺序影响。' : classification === 'lua' ? 'Project Zomboid 会分别加载多个 MOD 的 Lua；同路径本身不是证据，真正影响取决于运行时执行分支和注册表如何处理重复项。' : scriptConflict ? '后加载的 item、recipe、vehicle、model 或其他实体定义可能替换先加载定义；也可能是作者设计的扩展补丁。' : scriptUnparsed ? '当前证据不足以判断这些文件是否重复定义了同一游戏实体。' : translationUnparsed ? '当前证据不足以判断这些翻译容器是否包含同键不同值。' : classification === 'translation' ? '相同翻译键被赋予不同文字，最终显示内容可能受加载顺序影响。' : '后加载内容可能替代先加载内容，是否有害取决于文件语义。', action: luaConflict ? '先核对列出的符号或注册键是否是有意补丁，再按作者要求调整加载顺序；若作者未说明，复制存档后实际启动并检查 console.txt。' : classification === 'lua' ? '保留当前组合做一次主菜单和测试存档启动；若异常，只围绕列出的 MOD、注册键与 console.txt 排查，不要仅因文件同名删除 MOD。' : scriptConflict ? '核对报告中的完整实体键和结构摘要。如果其中一个是皮肤包或补丁，让补丁按作者要求后加载；随后用测试存档验证对应物品、配方或车辆。' : scriptUnparsed ? '检查文件编码、注释和大括号是否完整，再重新分析；不要从未完成的解析结果删除 MOD。' : translationUnparsed ? '检查文件编码和语法，或手工比较其中的翻译键。' : classification === 'translation' ? '核对列出的冲突键和 MOD 预期；如果是翻译补丁，应让补丁在原 MOD 之后加载。' : '先查看示例路径和涉及 MOD；只有出现运行症状或作者明确说明时才判定为真实冲突。', rule: `FILE-OVERLAP-${classification.toUpperCase()}` }))
   }
   if (files.identicalOverlapCount) issues.push(issue('identical-overlaps', 'pass', 'files', '同路径但内容完全相同的文件已排除风险', `${files.identicalOverlapCount} 个重叠路径的 SHA-256 完全一致，没有作为冲突报告。`, [], [], { confidence: 'confirmed', rule: 'FILE-OVERLAP-HASH-EQUALITY' }))
   if (files.semanticSafeTranslationCount) issues.push(issue('translation-keys-disjoint', 'pass', 'files', '翻译容器的键互不冲突', `${files.semanticSafeTranslationCount} 个同路径翻译文件虽然字节不同，但解析后没有发现同键不同值。`, [], [], { confidence: 'confirmed', rule: 'FILE-TRANSLATION-KEYS-DISJOINT' }))
+  if (files.semanticSafeScriptCount) issues.push(issue('script-definitions-disjoint', 'pass', 'files', '同路径游戏脚本没有实体定义冲突', `${files.semanticSafeScriptCount} 个同路径脚本虽然字节不同，但 module 与实体定义键互不冲突或定义内容一致。`, [], [], { confidence: 'confirmed', rule: 'PZ-SCRIPT-DEFINITIONS-DISJOINT' }))
   if (files.baseOverrideCount) issues.push(issue('base-overrides', 'unknown', 'files', '检测到 MOD 使用了原版已有路径', `${files.baseOverrideCount} 个有效路径同时存在于游戏目录；这只是覆盖事实，不足以证明不兼容。`, [source.gamePath], [], { confidence: 'confirmed', impact: '可能是有意修改原版资源，也可能在游戏更新后需要适配。', action: '结合具体路径、MOD 说明和实际运行日志判断；不要仅凭数量删除 MOD。', rule: 'BASE-PATH-OVERRIDE' }))
   const scopedCatalogMods = hasSelectedContext ? modCatalog.mods.filter((mod) => mod.active) : modCatalog.mods
   const scopedCatalogIds = new Set(scopedCatalogMods.map((mod) => mod.catalogId))
@@ -599,13 +621,15 @@ export const analyzeCompatibility = async (): Promise<CompatibilityReport> => {
       '受限读取 JAR 与 Class 常量池，登记类版本、PZ API 引用、Mixin 痕迹、native 方法和跨 MOD 同名类哈希。',
       '只对当前分析范围内的 MOD 建立依赖图和加载顺序。',
       '对同路径文件计算 SHA-256；内容完全相同的重叠不会作为风险报告。',
-      'Lua 只做受限静态分词，提取 require、事件挂接、全局写入、直接注册键和带 type 的表注册；不执行脚本。'
+      'Lua 只做受限静态分词，提取 require、事件挂接、全局写入、直接注册键和带 type 的表注册；不执行脚本。',
+      'Project Zomboid 脚本按 module 与完整定义头解析实体键，并比较去除注释和排版后的定义内容与直接子块数量。'
     ],
     limitations: [
       selectedContext ? `本报告的主要结论只适用于“${scopeLabel}”。` : '没有唯一启用上下文，因此依赖和覆盖分析只能描述已安装内容，不能代表某个实际存档或服务器。',
       ...(selectedContext?.missingModIds.length ? [`${selectedContext.missingModIds.length} 个缺失 Mod ID 没有文件可供解析；它们的依赖、互斥、tiledef 和文件覆盖不在已完成扫描内。`] : []),
       '静态分析不会执行 Lua、Java 或本地二进制代码；反射、动态类生成、类加载器先后和 Mixin 实际应用仍需运行日志验证。',
-      '多个 MOD 的 Lua 相对路径相同不等于互相覆盖；只有静态证据确认同名写入或注册差异时才提升为警告。'
+      '多个 MOD 的 Lua 相对路径相同不等于互相覆盖；只有静态证据确认同名写入或注册差异时才提升为警告。',
+      'PZ 脚本 V1 只比较当前已经出现同路径的文件；不同路径中的同名实体将在后续全局定义索引中检查。'
     ],
     summary: {
       installedMods: mods.length,

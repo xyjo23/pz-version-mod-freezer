@@ -710,7 +710,7 @@ export type FileOverlap = {
   modIds: string[]
   overridesBaseGame: boolean
   contentIdentical: boolean | null
-  semanticStatus?: 'keys-disjoint' | 'keys-conflict' | 'unparsed' | 'lua-symbol-conflict' | 'lua-registration-repeat' | 'lua-static-disjoint' | 'lua-unparsed'
+  semanticStatus?: 'keys-disjoint' | 'keys-conflict' | 'unparsed' | 'lua-symbol-conflict' | 'lua-registration-repeat' | 'lua-static-disjoint' | 'lua-unparsed' | 'script-definition-conflict' | 'script-definitions-identical' | 'script-definitions-disjoint' | 'script-unparsed'
   semanticEvidence?: string[]
 }
 
