@@ -100,7 +100,47 @@ export const installBrowserPreviewApi = (): void => {
           ...(!hasLabel ? ['请为新版本填写一个便于识别的名称；版本号只作为技术信息显示。'] : []),
           ...(steamFastLink ? ['Steam 原版会自动更新，不能作为薄版本的稳定基础；请先创建完整冻结版。'] : [])
         ],
-        steps: ['验证来源与目标', '迁移游戏、MOD 与缓存', '登记新版本']
+        steps: ['验证来源与目标', '迁移游戏、MOD 与缓存', '登记新版本'],
+        analysis: request.mode === 'SafeCopy' ? {
+          strategy: 'FullCopy',
+          sourceGameFiles: 18432,
+          sourceGameBytes: 23800000000,
+          sourceCacheFiles: 1287,
+          sourceCacheBytes: 2140000000,
+          referencedModRoots: 0,
+          referencedModFiles: 0,
+          referencedModBytes: 0,
+          copiedMutableFiles: 1287,
+          copiedMutableBytes: 2140000000,
+          estimatedWriteBytes: 25940000000,
+          estimatedSavedBytes: 0,
+          omittedFiles: 46,
+          omittedBytes: 320000000,
+          activeModIds: ['CommonSense', 'modoptions'],
+          missingModIds: [],
+          contextPath: 'C:\\Users\\victor\\Zomboid\\Saves\\Sandbox\\save\\mods.txt',
+          fallbackToAllMods: false
+        } : {
+          strategy: 'ThinReference',
+          sourceGameFiles: 18432,
+          sourceGameBytes: 23800000000,
+          sourceCacheFiles: 1287,
+          sourceCacheBytes: 2140000000,
+          referencedModRoots: 154,
+          referencedModFiles: 9842,
+          referencedModBytes: 7600000000,
+          copiedMutableFiles: 1287,
+          copiedMutableBytes: 2140000000,
+          estimatedWriteBytes: 2140000000,
+          estimatedSavedBytes: 31400000000,
+          omittedFiles: 46,
+          omittedBytes: 320000000,
+          activeModIds: ['CommonSense', 'modoptions'],
+          missingModIds: [],
+          contextPath: 'C:\\Users\\victor\\Zomboid\\Saves\\Sandbox\\save\\mods.txt',
+          fallbackToAllMods: false
+        },
+        space: { requiredBytes: request.mode === 'SafeCopy' ? 25940000000 : 2140000000, reserveBytes: 5368709120, availableBytes: 82400000000, sufficient: true }
       }
     },
     executeMigration: async (request) => {

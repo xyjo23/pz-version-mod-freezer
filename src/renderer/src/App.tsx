@@ -252,26 +252,57 @@ const VersionRadar = ({ versions, steam, activeSource, onFrozenActivate, onSteam
     return [{ id: 'steam-original', kind: 'Steam' as const, name: 'Steam 原版', version: steam.version, created: steam.installedAt ?? undefined, current: activeSource === 'Steam', healthy: true }, ...frozen]
   }, [activeSource, steam, versions])
   const positions = useMemo(() => layoutRadarItems(items.map((item) => ({ key: `${item.kind}-${item.id}`, version: item.version, created: item.created, current: item.current }))), [items])
+  const currentItem = items.find((item) => item.current)
+  const currentKey = currentItem ? `${currentItem.kind}-${currentItem.id}` : null
+  const [selectedKey, setSelectedKey] = useState<string | null>(currentKey ?? (items[0] ? `${items[0].kind}-${items[0].id}` : null))
+  useEffect(() => {
+    if (currentKey) setSelectedKey(currentKey)
+  }, [currentKey])
+  useEffect(() => {
+    if (selectedKey && !items.some((item) => `${item.kind}-${item.id}` === selectedKey)) setSelectedKey(currentKey ?? (items[0] ? `${items[0].kind}-${items[0].id}` : null))
+  }, [currentKey, items, selectedKey])
+  const selectedItem = items.find((item) => `${item.kind}-${item.id}` === selectedKey) ?? items[0] ?? null
+  const activateSelected = (): void => {
+    if (!selectedItem?.healthy || selectedItem.current) return
+    selectedItem.kind === 'Steam' ? onSteamActivate() : onFrozenActivate(selectedItem.id)
+  }
 
   return <section className="version-radar-panel enter delay-1">
-    <div className="version-radar" role="group" aria-label="版本相对雷达，双击光点切换版本">
-      <div className="radar-grid-ring ring-a" /><div className="radar-grid-ring ring-b" /><div className="radar-grid-ring ring-c" />
-      <div className="radar-axis horizontal"><span>更早</span><i /><span>更新</span></div>
-      <div className="radar-axis vertical"><span>高版本</span><i /><span>低版本</span></div>
-      <div className="radar-sweep" />
-      {items.map((item, index) => {
-        const position = positions[index] ?? { left: 50, top: 50 }
-        return <button
-          key={`${item.kind}-${item.id}`}
-          className={`radar-blip ${item.current ? 'current' : ''} ${item.kind === 'Steam' ? 'steam' : ''} ${item.healthy ? '' : 'unhealthy'}`}
-          style={{ left: `${position.left}%`, top: `${position.top}%`, animationDelay: `${index * 180}ms` }}
-          aria-disabled={!item.healthy}
-          onDoubleClick={() => { if (item.healthy) item.kind === 'Steam' ? onSteamActivate() : onFrozenActivate(item.id) }}
-          onKeyDown={(event) => { if (event.key === 'Enter' && item.healthy) item.kind === 'Steam' ? onSteamActivate() : onFrozenActivate(item.id) }}
-          aria-label={`${item.name}，版本 ${item.version}，${item.healthy ? '双击或按 Enter 切换' : '当前版本不可切换'}`}
-        ><span className="radar-dot" /><span className="radar-tooltip"><b>{item.name}</b><small>版本 {item.version}</small><em>{item.current ? '当前中心' : formatDate(item.created)}</em></span></button>
-      })}
-      {!items.length && <div className="radar-no-versions">尚无可扫描版本</div>}
+    <div className="radar-workspace">
+      <div className="version-radar" role="group" aria-label="版本相对雷达，单击查看，双击切换版本">
+        <div className="radar-grid-ring ring-a" /><div className="radar-grid-ring ring-b" /><div className="radar-grid-ring ring-c" />
+        <div className="radar-axis horizontal"><span>更早</span><i /><span>更新</span></div>
+        <div className="radar-axis vertical"><span>高版本</span><i /><span>低版本</span></div>
+        <div className="radar-sweep" />
+        {items.map((item, index) => {
+          const position = positions[index] ?? { left: 50, top: 50 }
+          const itemKey = `${item.kind}-${item.id}`
+          return <button
+            key={itemKey}
+            className={`radar-blip ${item.current ? 'current' : ''} ${item.kind === 'Steam' ? 'steam' : ''} ${item.healthy ? '' : 'unhealthy'} ${selectedKey === itemKey ? 'selected' : ''}`}
+            style={{ left: `${position.left}%`, top: `${position.top}%`, animationDelay: `${index * 180}ms` }}
+            aria-disabled={!item.healthy}
+            aria-pressed={selectedKey === itemKey}
+            onClick={() => setSelectedKey(itemKey)}
+            onDoubleClick={() => { if (item.healthy && !item.current) item.kind === 'Steam' ? onSteamActivate() : onFrozenActivate(item.id) }}
+            onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); setSelectedKey(itemKey) } }}
+            aria-label={`${item.name}，版本 ${item.version}，单击查看${item.healthy && !item.current ? '，双击切换' : ''}`}
+          ><span className="radar-dot" /><span className="radar-tooltip"><b>{item.name}</b><small>版本 {item.version}</small><em>{item.current ? '当前中心' : formatDate(item.created)}</em></span></button>
+        })}
+        {!items.length && <div className="radar-no-versions">尚无可扫描版本</div>}
+      </div>
+      <aside className="radar-inspector" aria-live="polite">
+        <div className="radar-inspector-head"><div><span className="eyebrow">RADAR INSPECTOR</span><h2>版本定位</h2></div><div className="radar-count"><b>{items.length}</b><span>已登记</span></div></div>
+        <p className="radar-guide">横向表示登记时间，纵向表示游戏版本。位置只用于快速区分，不代表兼容性结论。</p>
+        <div className="radar-legend"><span><i className="current" />当前版本</span><span><i className="steam" />Steam</span><span><i />冻结版</span><span><i className="unhealthy" />不可用</span></div>
+        {selectedItem ? <div className={`radar-selection ${selectedItem.healthy ? '' : 'unhealthy'}`}>
+          <div className="radar-selection-status"><span>{selectedItem.kind === 'Steam' ? 'STEAM MANAGED' : 'FROZEN BUILD'}</span><b>{selectedItem.current ? '当前使用' : selectedItem.healthy ? '可以切换' : '暂不可用'}</b></div>
+          <VersionName name={selectedItem.name} />
+          <dl><div><dt>游戏版本</dt><dd>{selectedItem.version}</dd></div><div><dt>登记时间</dt><dd>{formatDate(selectedItem.created)}</dd></div></dl>
+          <button className="primary-button radar-switch" disabled={!selectedItem.healthy || selectedItem.current} onClick={activateSelected}>{selectedItem.current ? <CheckCircle2 /> : selectedItem.healthy ? <RefreshCw /> : <ShieldAlert />}{selectedItem.current ? '当前版本无需切换' : selectedItem.healthy ? '切换到此版本' : '版本检查未通过'}</button>
+          <small>单击光点只查看信息；只有点击上方按钮或双击光点才会切换。</small>
+        </div> : <div className="radar-selection empty"><Search /><b>选择一个版本光点</b><span>这里会显示版本身份与可用状态。</span></div>}
+      </aside>
     </div>
   </section>
 }
@@ -303,6 +334,13 @@ const confidenceLabels: Record<AnalysisConfidence, string> = {
   unverified: '证据不足'
 }
 
+const reportGuidance: Record<CompatibilitySeverity, { title: string; detail: string }> = {
+  blocker: { title: '先处理阻断项，再继续启动或迁移', detail: '红色结论代表已经找到会直接破坏当前目标的明确证据。按报告顺序处理后重新分析。' },
+  warning: { title: '可以继续核对，但建议先处理警告', detail: '橙色结论不是必然失败。先确认影响范围和处理建议，再决定是否进入游戏验证。' },
+  unknown: { title: '证据还不足，暂时不要当作通过', detail: '蓝色结论表示静态证据无法覆盖运行时行为。请展开依据，并结合实际日志或小范围测试。' },
+  pass: { title: '当前检查范围内没有发现异常', detail: '绿色通过只覆盖报告列出的规则与文件范围；游戏更新或 MOD 清单变化后需要重新分析。' }
+}
+
 const overlapLabels: Record<FileOverlapClassification, string> = {
   lua: 'Lua 脚本',
   scripts: '游戏脚本',
@@ -327,9 +365,10 @@ type ReadableFinding = {
   appliesToScope?: boolean
 }
 
-const FindingCard = ({ entry }: { entry: ReadableFinding }): React.JSX.Element => (
+const FindingCard = ({ entry, index }: { entry: ReadableFinding; index: number }): React.JSX.Element => (
   <article className={`compatibility-issue ${entry.severity} ${entry.appliesToScope === false ? 'out-of-scope' : ''}`}>
-    <div className="issue-labels">
+    <div className="issue-labels"><span className="issue-index">{String(index + 1).padStart(2, '0')}</span>
+      <span className={`issue-state-icon ${entry.severity}`}>{entry.severity === 'pass' ? <CheckCircle2 /> : entry.severity === 'blocker' ? <ShieldAlert /> : entry.severity === 'warning' ? <CircleAlert /> : <Search />}</span>
       <span className="issue-severity">{compatibilityLabels[entry.severity]}</span>
       <span className={`confidence-label ${entry.confidence}`}>{confidenceLabels[entry.confidence]}</span>
       {entry.appliesToScope === false && <span className="scope-label">其他配置</span>}
@@ -349,6 +388,15 @@ const FindingCard = ({ entry }: { entry: ReadableFinding }): React.JSX.Element =
   </article>
 )
 
+const ReportDecision = ({ verdict }: { verdict: CompatibilitySeverity }): React.JSX.Element => {
+  const guidance = reportGuidance[verdict]
+  return <section className={`report-decision ${verdict}`}>
+    <div className="report-decision-icon">{verdict === 'pass' ? <CheckCircle2 /> : verdict === 'blocker' ? <ShieldAlert /> : verdict === 'warning' ? <CircleAlert /> : <Search />}</div>
+    <div><span>建议下一步</span><b>{guidance.title}</b><p>{guidance.detail}</p></div>
+    <ol aria-label="报告阅读顺序"><li><span>1</span>先看结论</li><li><span>2</span>处理当前范围</li><li><span>3</span>按需展开证据</li></ol>
+  </section>
+}
+
 const ReportMethod = ({ methodology, limitations }: { methodology: string[]; limitations: string[] }): React.JSX.Element => (
   <details className="report-method">
     <summary>这份报告是怎样得出结论的</summary>
@@ -363,6 +411,7 @@ const CompatibilityResults = ({ report }: { report: CompatibilityReport }): Reac
       <div className={`compatibility-verdict ${report.verdict}`}><span />{compatibilityLabels[report.verdict]}</div>
     </div>
     <div className="report-plain-summary"><b>本次结论</b><p>{report.plainSummary}</p><span>分析范围：{report.scopeLabel}</span></div>
+    <ReportDecision verdict={report.verdict} />
     <div className="compatibility-stats">
       <div><span>已安装 MOD</span><b>{report.summary.installedMods}</b><small>激活 {report.summary.activeMods}</small></div>
       <div className="danger"><span>阻断</span><b>{report.summary.blockers}</b><small>必须处理</small></div>
@@ -385,7 +434,7 @@ const CompatibilityResults = ({ report }: { report: CompatibilityReport }): Reac
     <div className="compatibility-columns">
       <div className="compatibility-issues">
         <div className="report-section-title"><h3>规则结果</h3><span>{report.issues.filter((entry) => entry.appliesToScope).length} 项影响当前范围 · {report.issues.length} 项已列出</span></div>
-        {report.issues.map((entry) => <FindingCard entry={entry} key={entry.id} />)}
+        {report.issues.map((entry, index) => <FindingCard entry={entry} index={index} key={entry.id} />)}
       </div>
       <div className="overlap-evidence">
         <div className="report-section-title"><h3>同路径与语义证据</h3><span>显示 {report.overlaps.length}/{report.summary.overlapPaths}</span></div>
@@ -403,6 +452,7 @@ const IntegrityResults = ({ report }: { report: IntegrityReport }): React.JSX.El
       <div className={`compatibility-verdict ${report.verdict}`}><span />{compatibilityLabels[report.verdict]}</div>
     </div>
     <div className="report-plain-summary"><b>本次结论</b><p>{report.plainSummary}</p><span>存储方式：{report.storageMode === 'ThinReference' ? '快速迁移版（引用与回退复制）' : report.storageMode === 'FullCopy' ? '全量迁移版（独立文件）' : 'Steam 原版'}</span></div>
+    <ReportDecision verdict={report.verdict} />
     <div className="compatibility-stats integrity-stats">
       <div><span>已检查项目</span><b>{report.summary.checkedFiles}</b><small>{report.storageMode === 'ThinReference' ? '文件与引用' : '基线文件'}</small></div>
       <div className="danger"><span>缺失</span><b>{report.summary.missingFiles}</b><small>基线内容不存在</small></div>
@@ -413,7 +463,7 @@ const IntegrityResults = ({ report }: { report: IntegrityReport }): React.JSX.El
     </div>
     <div className="integrity-findings">
       <div className="report-section-title"><h3>文件与结构结论</h3><span>{report.findings.length} 项</span></div>
-      {report.findings.map((entry) => <FindingCard entry={entry} key={entry.id} />)}
+      {report.findings.map((entry, index) => <FindingCard entry={entry} index={index} key={entry.id} />)}
     </div>
     <ReportMethod methodology={report.methodology} limitations={report.limitations} />
   </section>
@@ -1172,6 +1222,14 @@ export const App = (): React.JSX.Element => {
     setMotionEnabled(enabled)
     window.localStorage.setItem('pz-vault-motion-enabled', String(enabled))
   }
+  const migrationSourceReady = migrationSourceType === 'Steam' ? Boolean(steam?.detected) : Boolean(migrationSourceId)
+  const migrationDestinationReady = Boolean(snapshot?.managerRoot && migrationLabel.trim())
+  const migrationCanRun = Boolean(migrationPreview?.canRun)
+  const migrationStepClass = (step: number): string => {
+    const complete = step === 1 ? migrationSourceReady : step === 2 ? migrationSourceReady : migrationCanRun
+    const current = !migrationSourceReady ? step === 1 : !migrationDestinationReady || !migrationCanRun ? step === 3 : false
+    return complete ? 'complete' : current ? 'current' : 'pending'
+  }
 
   return (
     <div className={`app-shell ${motionEnabled ? 'motion-enabled' : 'motion-reduced'}`} data-view={activeView}>
@@ -1250,9 +1308,10 @@ export const App = (): React.JSX.Element => {
               <div className="maintenance-mode-tabs enter delay-1"><button className={maintenanceSection === 'version-control' ? 'active' : ''} onClick={() => setMaintenanceSection('version-control')}><Boxes />版本控制</button><button className={maintenanceSection === 'integrity' ? 'active' : ''} onClick={() => setMaintenanceSection('integrity')}><ClipboardCheck />完整性与兼容性</button><button className={maintenanceSection === 'share' ? 'active' : ''} onClick={() => setMaintenanceSection('share')}><PackageOpen />共享包</button></div>
               {maintenanceSection === 'version-control' ? <section className="migration-workflow enter delay-2">
                 <div className="workflow-header"><div><span className="eyebrow">NEW MANAGED VERSION</span><h2>创建受管版本</h2><p>明确选择来源、迁移模式和目标库。每次执行都会创建新的版本目录，不要求目标中预先存在文件。</p></div><div className={`workflow-ready ${migrationPreview?.canRun ? 'ready' : ''}`}><span />{migrationPreview?.canRun ? '可以执行' : '等待配置'}</div></div>
-                <div className="workflow-step"><div className="step-index">1</div><div className="step-body"><h3>选择迁移来源</h3><p>来源可以是实时 Steam 原版，也可以是版本库中的任意冻结版本。</p><div className="choice-grid source-choices"><button className={migrationSourceType === 'Steam' ? 'selected' : ''} onClick={() => { setMigrationSourceType('Steam'); setMigrationSourceId('') }}><div className="choice-icon steam"><span>ST</span></div><div><b>Steam 原版</b><small>{steam?.detected ? `${steam.version} · Build ${steam.buildId}` : steam?.issue ?? '正在检测'}</small></div>{migrationSourceType === 'Steam' && <CheckCircle2 />}</button><button className={migrationSourceType === 'Frozen' ? 'selected' : ''} disabled={!versions.length} onClick={() => { setMigrationSourceType('Frozen'); setMigrationSourceId((current) => current || versions[0]?.id || '') }}><div className="choice-icon"><Boxes /></div><div><b>已有冻结版本</b><small>{versions.length ? `${versions.length} 个版本可选` : '版本库为空'}</small></div>{migrationSourceType === 'Frozen' && <CheckCircle2 />}</button></div>{migrationSourceType === 'Frozen' && <label className="field-label">具体来源<select value={migrationSourceId} onChange={(event) => setMigrationSourceId(event.target.value)}><option value="">请选择冻结版本</option>{versions.map((version) => <option value={version.id} key={version.id}>{version.name} · {version.version} · Build {version.buildId ?? '—'}{version.isActive ? '（当前）' : ''}</option>)}</select></label>}</div></div>
-                <div className="workflow-step"><div className="step-index">2</div><div className="step-body"><h3>选择迁移模式</h3><p>完整复制可独立移动；快速薄版本依赖一个不可变冻结版，只新增当前版本真正需要的文件。</p><div className="choice-grid mode-choices"><button className={migrationMode === 'SafeCopy' ? 'selected' : ''} onClick={() => setMigrationMode('SafeCopy')}><div className="choice-icon"><Copy /></div><div><b>安全完整复制</b><small>游戏、MOD、配置和存档全部独立</small><em>可独立归档</em></div>{migrationMode === 'SafeCopy' && <CheckCircle2 />}</button><button className={migrationMode === 'FastLink' ? 'selected risk' : 'risk'} onClick={() => setMigrationMode('FastLink')}><div className="choice-icon amber"><Zap /></div><div><b>快速薄版本</b><small>引用游戏核心与启用 MOD，仅复制存档和配置</small><em>低空间占用</em></div>{migrationMode === 'FastLink' && <CheckCircle2 />}</button></div></div></div>
-                <div className="workflow-step"><div className="step-index">3</div><div className="step-body"><h3>命名并确认迁移位置</h3><p>名称是所有页面显示的主标题；游戏版本号和 Build 只作为技术信息。完成后会自动登记并切换到新版本。</p><div className="destination-row"><div><span>版本管理目录</span><code>{snapshot?.managerRoot ?? '尚未选择'}</code></div><button className="secondary-button" onClick={() => void chooseRoot()}><FolderCog />更换</button></div><label className="field-label">版本名称（必填）<input value={migrationLabel} onChange={(event) => setMigrationLabel(event.target.value)} placeholder="例如：长期生存主档、怀旧模组服" required /></label>{migrationPreview && <div className={`migration-preview ${migrationPreview.canRun ? 'ready' : 'blocked'}`}><div className="preview-path"><span>计划目标</span><code>{migrationPreview.targetPath ?? '尚未生成'}</code></div>{migrationPreview.analysis && <div className="migration-storage-analysis"><div><span>预计新增</span><b>{formatBytes(migrationPreview.analysis.estimatedWriteBytes)}</b><small>{migrationPreview.analysis.copiedMutableFiles} 个独立文件</small></div><div><span>引用游戏核心</span><b>{formatBytes(migrationPreview.analysis.sourceGameBytes)}</b><small>{migrationPreview.analysis.sourceGameFiles} 个文件</small></div><div><span>挂接启用 MOD</span><b>{formatBytes(migrationPreview.analysis.referencedModBytes)}</b><small>{migrationPreview.analysis.referencedModRoots} 个根目录</small></div><div className="saved"><span>预计节省</span><b>{formatBytes(migrationPreview.analysis.estimatedSavedBytes)}</b><small>相对完整复制</small></div></div>}{migrationPreview.space && <div className={`migration-space-check ${migrationPreview.space.sufficient ? 'sufficient' : 'insufficient'}`}><HardDrive /><div><b>{migrationPreview.space.sufficient ? '磁盘空间满足要求' : '磁盘空间不足，已阻止执行'}</b><span>预计写入 {formatBytes(migrationPreview.space.requiredBytes)} · 安全余量 {formatBytes(migrationPreview.space.reserveBytes)} · 当前可用 {formatBytes(migrationPreview.space.availableBytes)}</span></div></div>}{migrationPreview.steps.map((step, index) => <div className="preview-step" key={step}><span>{index + 1}</span>{step}</div>)}{migrationPreview.warnings.map((warning) => <div className="preview-warning" key={warning}><ShieldAlert />{warning}</div>)}</div>}<button className="migration-execute" disabled={!migrationPreview?.canRun || migrationBusy} onClick={() => void migrateVersion()}>{migrationBusy ? <LoaderCircle className="spin" /> : <ArrowRight />}开始创建受管版本</button></div></div>
+                <div className="workflow-progress" aria-label="迁移配置进度"><div className={migrationStepClass(1)}><span>{migrationSourceReady ? <CheckCircle2 /> : '1'}</span><p><b>选择来源</b><small>{migrationSourceReady ? '来源已识别' : '等待选择'}</small></p></div><i /><div className={migrationStepClass(2)}><span>{migrationSourceReady ? <CheckCircle2 /> : '2'}</span><p><b>选择模式</b><small>{migrationMode === 'SafeCopy' ? '完整复制' : '快速薄版本'}</small></p></div><i /><div className={migrationStepClass(3)}><span>{migrationCanRun ? <CheckCircle2 /> : '3'}</span><p><b>确认执行</b><small>{migrationCanRun ? '预检已通过' : migrationDestinationReady ? '检查迁移条件' : '填写名称与目录'}</small></p></div></div>
+                <div className={`workflow-step ${migrationStepClass(1)}`}><div className="step-index">{migrationSourceReady ? <CheckCircle2 /> : '1'}</div><div className="step-body"><h3>选择迁移来源</h3><p>来源可以是实时 Steam 原版，也可以是版本库中的任意冻结版本。</p><div className="choice-grid source-choices"><button className={migrationSourceType === 'Steam' ? 'selected' : ''} onClick={() => { setMigrationSourceType('Steam'); setMigrationSourceId('') }}><div className="choice-icon steam"><span>ST</span></div><div><b>Steam 原版</b><small>{steam?.detected ? `${steam.version} · Build ${steam.buildId}` : steam?.issue ?? '正在检测'}</small></div>{migrationSourceType === 'Steam' && <CheckCircle2 />}</button><button className={migrationSourceType === 'Frozen' ? 'selected' : ''} disabled={!versions.length} onClick={() => { setMigrationSourceType('Frozen'); setMigrationSourceId((current) => current || versions[0]?.id || '') }}><div className="choice-icon"><Boxes /></div><div><b>已有冻结版本</b><small>{versions.length ? `${versions.length} 个版本可选` : '版本库为空'}</small></div>{migrationSourceType === 'Frozen' && <CheckCircle2 />}</button></div>{migrationSourceType === 'Frozen' && <label className="field-label">具体来源<select value={migrationSourceId} onChange={(event) => setMigrationSourceId(event.target.value)}><option value="">请选择冻结版本</option>{versions.map((version) => <option value={version.id} key={version.id}>{version.name} · {version.version} · Build {version.buildId ?? '—'}{version.isActive ? '（当前）' : ''}</option>)}</select></label>}</div></div>
+                <div className={`workflow-step ${migrationStepClass(2)}`}><div className="step-index">{migrationSourceReady ? <CheckCircle2 /> : '2'}</div><div className="step-body"><h3>选择迁移模式</h3><p>完整复制可独立移动；快速薄版本依赖一个不可变冻结版，只新增当前版本真正需要的文件。</p><div className="choice-grid mode-choices"><button className={migrationMode === 'SafeCopy' ? 'selected' : ''} onClick={() => setMigrationMode('SafeCopy')}><div className="choice-icon"><Copy /></div><div><b>安全完整复制</b><small>游戏、MOD、配置和存档全部独立</small><em>可独立归档</em></div>{migrationMode === 'SafeCopy' && <CheckCircle2 />}</button><button className={migrationMode === 'FastLink' ? 'selected risk' : 'risk'} onClick={() => setMigrationMode('FastLink')}><div className="choice-icon amber"><Zap /></div><div><b>快速薄版本</b><small>引用游戏核心与启用 MOD，仅复制存档和配置</small><em>低空间占用</em></div>{migrationMode === 'FastLink' && <CheckCircle2 />}</button></div></div></div>
+                <div className={`workflow-step ${migrationStepClass(3)}`}><div className="step-index">{migrationCanRun ? <CheckCircle2 /> : '3'}</div><div className="step-body"><h3>命名并确认迁移位置</h3><p>名称是所有页面显示的主标题；游戏版本号和 Build 只作为技术信息。完成后会自动登记并切换到新版本。</p><div className="destination-row"><div><span>版本管理目录</span><code>{snapshot?.managerRoot ?? '尚未选择'}</code></div><button className="secondary-button" onClick={() => void chooseRoot()}><FolderCog />更换</button></div><label className="field-label">版本名称（必填）<input value={migrationLabel} onChange={(event) => setMigrationLabel(event.target.value)} placeholder="例如：长期生存主档、怀旧模组服" required /></label>{migrationPreview && <div className={`migration-preview ${migrationPreview.canRun ? 'ready' : 'blocked'}`}><div className="migration-preview-heading"><div><span>{migrationPreview.canRun ? <CheckCircle2 /> : <ShieldAlert />}</span><p><b>{migrationPreview.canRun ? '执行前检查已经通过' : '还有条件需要处理'}</b><small>{migrationPreview.canRun ? '以下内容是本次操作将实际执行的范围。' : '阅读黄色提示，修正后系统会自动重新预检。'}</small></p></div><em>{migrationMode === 'SafeCopy' ? '完整复制' : '快速薄版本'}</em></div><div className="preview-path"><span>计划目标</span><code>{migrationPreview.targetPath ?? '尚未生成'}</code></div>{migrationPreview.analysis && <div className="migration-storage-analysis"><div><span>预计新增</span><b>{formatBytes(migrationPreview.analysis.estimatedWriteBytes)}</b><small>{migrationPreview.analysis.copiedMutableFiles} 个独立文件</small></div><div><span>引用游戏核心</span><b>{formatBytes(migrationPreview.analysis.sourceGameBytes)}</b><small>{migrationPreview.analysis.sourceGameFiles} 个文件</small></div><div><span>挂接启用 MOD</span><b>{formatBytes(migrationPreview.analysis.referencedModBytes)}</b><small>{migrationPreview.analysis.referencedModRoots} 个根目录</small></div><div className="saved"><span>预计节省</span><b>{formatBytes(migrationPreview.analysis.estimatedSavedBytes)}</b><small>相对完整复制</small></div></div>}{migrationPreview.space && <div className={`migration-space-check ${migrationPreview.space.sufficient ? 'sufficient' : 'insufficient'}`}><HardDrive /><div><b>{migrationPreview.space.sufficient ? '磁盘空间满足要求' : '磁盘空间不足，已阻止执行'}</b><span>预计写入 {formatBytes(migrationPreview.space.requiredBytes)} · 安全余量 {formatBytes(migrationPreview.space.reserveBytes)} · 当前可用 {formatBytes(migrationPreview.space.availableBytes)}</span></div></div>}<div className="preview-plan"><span>执行顺序</span>{migrationPreview.steps.map((step, index) => <div className="preview-step" key={step}><span>{index + 1}</span>{step}</div>)}</div>{migrationPreview.warnings.map((warning) => <div className="preview-warning" key={warning}><ShieldAlert />{warning}</div>)}</div>}<button className={`migration-execute ${migrationPreview?.canRun ? 'ready' : ''}`} disabled={!migrationPreview?.canRun || migrationBusy} onClick={() => void migrateVersion()}>{migrationBusy ? <LoaderCircle className="spin" /> : migrationPreview?.canRun ? <Play /> : <ArrowRight />}{migrationBusy ? '正在创建版本，请勿关闭启动器' : migrationPreview?.canRun ? '确认并创建受管版本' : '完成上方配置后即可执行'}</button></div></div>
               </section> : maintenanceSection === 'integrity' ? <div className="compatibility-workspace enter delay-2">
                 <div className="analysis-workspace-heading">
                   <div><span className="eyebrow">VERSION READINESS</span><h2>完整性与兼容性</h2><p>先确认版本实体可信，再判断当前 MOD 组合能否协同运行。</p></div>

@@ -6,6 +6,10 @@
 - Added a searchable `Ctrl+K` quick-navigation palette with keyboard focus containment and safe, navigation-only commands.
 - Added a persistent motion preference that preserves status feedback while disabling non-essential movement and respects the operating system reduced-motion setting.
 - Added automated 1440×900 visual smoke captures for the six primary workspaces and the command palette.
+- Reworked the version radar into an inspect-first workspace with a bounded plot, explicit legend, selected-version details and a deliberate switch action.
+- Added report decision guidance, reading order, severity icons and clearer evidence expansion for integrity and compatibility results.
+- Added a three-stage migration progress model, live readiness states, an execution plan and a clearer final confirmation surface.
+- Expanded visual smoke coverage to verify radar selection, ready migration previews and both analysis report types.
 
 ## 0.9.0-preview - 2026-11-27
 

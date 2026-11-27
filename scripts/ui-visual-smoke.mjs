@@ -35,6 +35,15 @@ const revealFinalFrame = (window) => window.webContents.executeJavaScript(`
   }
 `)
 
+const scrollToSelector = (window, selector, offset = 18) => window.webContents.executeJavaScript(`(() => {
+  const scroller = document.querySelector('.main-content')
+  const target = document.querySelector(${JSON.stringify(selector)})
+  if (!scroller || !target) return false
+  scroller.style.scrollBehavior = 'auto'
+  scroller.scrollTop += target.getBoundingClientRect().top - scroller.getBoundingClientRect().top - ${offset}
+  return true
+})()`)
+
 const main = async () => {
   await fs.mkdir(outputRoot, { recursive: true })
   const server = await createServer({
@@ -57,10 +66,7 @@ const main = async () => {
     backgroundColor: '#060a08',
     webPreferences: { backgroundThrottling: false }
   })
-  const capture = async (name, query) => {
-    await window.loadURL(`${baseUrl}?${query}`)
-    await window.webContents.executeJavaScript('document.fonts.ready')
-    await waitFor(window, "Boolean(document.querySelector('.view-stage h1'))", `${name} page content`)
+  const captureFrame = async (name) => {
     await revealFinalFrame(window)
     await wait(250)
     await finishFiniteAnimations(window)
@@ -71,20 +77,58 @@ const main = async () => {
     await fs.writeFile(destination, image.toPNG())
     return destination
   }
+  const capture = async (name, query) => {
+    await window.loadURL(`${baseUrl}?${query}`)
+    await window.webContents.executeJavaScript('document.fonts.ready')
+    await waitFor(window, "Boolean(document.querySelector('.view-stage h1'))", `${name} page content`)
+    return captureFrame(name)
+  }
   const captures = []
   for (const view of ['console', 'mods', 'versions', 'maintenance', 'help', 'settings']) captures.push(await capture(view, `view=${view}&versionView=radar`))
+
+  await window.loadURL(`${baseUrl}?view=versions&versionView=radar`)
+  await waitFor(window, "document.querySelectorAll('.radar-blip').length > 1", 'version radar points')
+  await window.webContents.executeJavaScript(`(() => {
+    const target = [...document.querySelectorAll('.radar-blip')].find((element) => element.getAttribute('aria-pressed') === 'false')
+    if (!target) return
+    target.setAttribute('data-visual-target', 'true')
+    target.click()
+  })()`)
+  await waitFor(window, "document.querySelector('[data-visual-target=\"true\"]')?.getAttribute('aria-pressed') === 'true'", 'radar selection change')
+  captures.push(await captureFrame('versions-selected'))
+
+  await window.loadURL(`${baseUrl}?view=maintenance`)
+  await waitFor(window, "Boolean(document.querySelector('.migration-workflow input'))", 'migration workflow')
+  await window.webContents.executeJavaScript(`(() => {
+    const input = document.querySelector('.migration-workflow input')
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+    setter?.call(input, '视觉验收迁移版本')
+    input?.dispatchEvent(new Event('input', { bubbles: true }))
+  })()`)
+  await waitFor(window, "Boolean(document.querySelector('.migration-preview.ready'))", 'ready migration preview')
+  await scrollToSelector(window, '.migration-preview', 180)
+  captures.push(await captureFrame('migration-ready'))
+
+  const captureAnalysis = async (mode) => {
+    await window.loadURL(`${baseUrl}?view=maintenance`)
+    await waitFor(window, "Boolean(document.querySelector('.maintenance-mode-tabs'))", `${mode} analysis workspace`)
+    await window.webContents.executeJavaScript("document.querySelectorAll('.maintenance-mode-tabs button')[1]?.click()")
+    await waitFor(window, "document.querySelectorAll('.analysis-selector').length === 2", `${mode} analysis selectors`)
+    const selectorIndex = mode === 'integrity' ? 0 : 1
+    await window.webContents.executeJavaScript(`document.querySelectorAll('.analysis-selector .tool-action')[${selectorIndex}]?.click()`)
+    await waitFor(window, `Boolean(document.querySelector('.${mode === 'integrity' ? 'integrity-report' : 'compatibility-report'}'))`, `${mode} report`)
+    await scrollToSelector(window, '.analysis-result-workspace', 18)
+    return captureFrame(`analysis-${mode}`)
+  }
+  captures.push(await captureAnalysis('integrity'))
+  captures.push(await captureAnalysis('compatibility'))
+
   await window.loadURL(`${baseUrl}?view=console`)
   await window.webContents.executeJavaScript('document.fonts.ready')
   await waitFor(window, "Boolean(document.querySelector('.view-stage h1'))", 'console page content')
   await window.webContents.executeJavaScript("document.querySelector('.command-trigger')?.click()")
   await waitFor(window, "Boolean(document.querySelector('.command-palette'))", 'command palette')
-  await revealFinalFrame(window)
-  await wait(150)
-  await finishFiniteAnimations(window)
-  const commandImage = await window.capturePage()
-  const commandPath = path.join(outputRoot, 'command-palette.png')
-  await fs.writeFile(commandPath, commandImage.toPNG())
-  captures.push(commandPath)
+  captures.push(await captureFrame('command-palette'))
   console.log(`UI_VISUAL_SMOKE=${JSON.stringify({ outputRoot, width: 1440, height: 900, captures })}`)
   window.destroy()
   await server.close()
